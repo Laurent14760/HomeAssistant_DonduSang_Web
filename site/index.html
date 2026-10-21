@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collectes de don du sang près de chez vous</title>
+<meta name="description" content="Prochaines collectes de l'Établissement français du sang autour d'un code postal : dates, places restantes, carte et remplissage.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%2234%200%20188%20256%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%22.15%22%20y1%3D%22.1%22%20x2%3D%22.85%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23E5483A%22/%3E%3Cstop%20offset%3D%22.55%22%20stop-color%3D%22%23C42A1D%22/%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%238E1810%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath%20d%3D%22M128%202C120%2016%2038%20104%2038%20166a90%2090%200%200%200%20180%200C218%20104%20136%2016%20128%202Z%22%20fill%3D%22url%28%23g%29%22/%3E%3Cpath%20d%3D%22M74%20158C72%20190%2092%20216%20124%20224%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-opacity%3D%22.8%22%20stroke-width%3D%2214%22%20stroke-linecap%3D%22round%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/styles.css">
+<script src="js/efs-core.js" defer></script>
+<script src="js/demo-data.js" defer></script>
+<script src="js/app.js" defer></script>
+</head>
+<body>
+<header class="wrap">
+  <p class="eyebrow brand"><svg class="logo" viewBox="34 0 188 256" aria-hidden="true"><path d="M128 2C120 16 38 104 38 166a90 90 0 0 0 180 0C218 104 136 16 128 2Z" fill="currentColor"/><path d="M74 158C72 190 92 216 124 224" fill="none" stroke="#fff" stroke-opacity=".8" stroke-width="14" stroke-linecap="round"/></svg>Don du sang · données EFS en direct</p>
+  <h1>Les collectes près de chez vous</h1>
+  <p class="lead">Saisissez un code postal et un rayon : la page interroge l’API publique de l’Établissement français du sang et met à jour la prochaine collecte, l’agenda des semaines à venir, la carte et le remplissage des créneaux.</p>
+
+  <form class="search" id="search" novalidate>
+    <div class="fields">
+      <div class="f">
+        <label for="cp">Code postal</label>
+        <input type="text" id="cp" name="cp" inputmode="numeric" autocomplete="postal-code" maxlength="5" placeholder="14760" required aria-describedby="cp-err">
+        <span class="field-error" id="cp-err" aria-live="polite"></span>
+      </div>
+      <div class="f wide" id="commune-field" hidden>
+        <label for="commune">Commune</label>
+        <select id="commune" name="commune"></select>
+      </div>
+      <div class="f wide">
+        <span class="lbl" id="rayon-lbl">Rayon d’action</span>
+        <div class="range">
+          <input type="range" id="rayon" name="rayon" min="1" max="50" step="1" value="10" aria-labelledby="rayon-lbl">
+          <output id="rayon-out" for="rayon">10 km</output>
+        </div>
+      </div>
+      <div class="f">
+        <label for="don">Type de don</label>
+        <select id="don" name="don">
+          <option value="sang">Sang total</option>
+          <option value="plasma">Plasma</option>
+          <option value="plaquettes">Plaquettes</option>
+        </select>
+      </div>
+      <div class="f">
+        <label for="horizon">Horizon</label>
+        <select id="horizon" name="horizon">
+          <option value="30">30 jours</option>
+          <option value="60" selected>60 jours</option>
+          <option value="90">90 jours</option>
+          <option value="180">6 mois</option>
+        </select>
+      </div>
+      <div class="f wide">
+        <label class="check"><input type="checkbox" id="pro" name="pro"> Inclure les collectes professionnelles (entreprises, lycées…)</label>
+      </div>
+      <div class="f wide">
+        <label class="check"><input type="checkbox" id="rdv" name="rdv"> Seulement les collectes où l’on peut prendre rendez-vous</label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit" id="go">Rechercher</button>
+        <button class="btn secondary" type="button" id="geoloc">Utiliser ma position</button>
+        <button class="btn ghost" type="button" id="demo">Données de démonstration</button>
+      </div>
+    </div>
+    <div class="base" id="base" aria-live="polite"></div>
+  </form>
+
+  <div class="status" id="status" aria-live="polite"></div>
+  <div id="notice"></div>
+
+  <nav class="toc" aria-label="Sommaire">
+    <a href="#synthese">1 · Prochaine collecte</a>
+    <a href="#agenda">2 · Agenda</a>
+    <a href="#suivi">3 · Carte et remplissage</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <section class="visual" id="synthese" aria-labelledby="t1">
+    <div class="sec-head">
+      <div><div class="num">VISUEL 1</div><h2 id="t1">Prochaine collecte</h2></div>
+      <p>L’essentiel pour décider d’aller donner : date, lieu, places restantes et accès direct au rendez-vous.</p>
+    </div>
+    <div class="pick">
+      <label for="vue-commune">Collecte présentée</label>
+      <select id="vue-commune"><option value="auto">Prochaine collecte (la plus proche dans le temps)</option></select>
+    </div>
+    <div id="v1"><div class="skeleton"></div></div>
+  </section>
+
+  <section class="visual" id="agenda" aria-labelledby="t2">
+    <div class="sec-head">
+      <div><div class="num">VISUEL 2</div><h2 id="t2">Agenda des collectes</h2></div>
+      <p>Toutes les collectes de l’horizon choisi, triées par date. Un planning non encore ouvert n’est jamais affiché comme « 0 place ».</p>
+    </div>
+    <div id="v2"><div class="skeleton"></div></div>
+  </section>
+
+  <section class="visual" id="suivi" aria-labelledby="t3">
+    <div class="sec-head">
+      <div><div class="num">VISUEL 3</div><h2 id="t3">Carte et remplissage</h2></div>
+      <p>Où se trouvent les collectes dans le rayon choisi, et à quel point leurs créneaux sont déjà réservés.</p>
+    </div>
+    <div id="v3"><div class="skeleton"></div></div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>Sources : API Carto v3 de l’Établissement français du sang (publique, référencée sur data.gouv.fr) et API Géo de l’État (geo.api.gouv.fr). Les données sont interrogées à chaque recherche et rafraîchies toutes les heures tant que la page reste ouverte.</p>
+  <p>Cookie : uniquement si vous enregistrez un lieu de base (cookie « efs_lieu_base », lu par ce navigateur seulement, jamais transmis à un tiers). Aucun cookie de mesure d’audience ou de publicité.</p>
+  <p>Page indépendante, non affiliée à l’EFS. Pour prendre rendez-vous, utilisez les liens qui mènent au site officiel <a href="https://dondesang.efs.sante.fr" target="_blank" rel="noopener">dondesang.efs.sante.fr</a>.</p>
+</footer>
+</body>
+</html>

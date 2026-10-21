@@ -1,0 +1,803 @@
+/* Interface : formulaire, appels API, rendu des trois visuels. Aucune dépendance. */
+(function () {
+  "use strict";
+
+  const C = window.EfsCore;
+  const $ = (id) => document.getElementById(id);
+  const SVG = "http://www.w3.org/2000/svg";
+  const REFRESH_MS = 60 * 60 * 1000;
+  const AGENDA_LIMIT = 12;
+
+  // Proxy local (Docker/nginx) d'abord, appel direct ensuite.
+  const ENDPOINTS = {
+    geo: ["api/geo/communes", "https://geo.api.gouv.fr/communes"],
+    efs: ["api/efs/samplingcollection/searchnearpoint",
+      "https://oudonner.api.efs.sante.fr/carto-api/v3/samplingcollection/searchnearpoint"],
+  };
+  const preferred = { geo: 0, efs: 0 };
+
+  const state = {
+    cp: "", insee: null, communes: [], cpLoaded: null,
+    center: null, radius: 10, don: "sang", horizon: 60, pro: false,
+    demo: false, raw: null, result: null, fetchedAt: null, error: null,
+    showAll: false, busy: false, timer: null,
+    rdvOnly: false, communeVue: "auto", base: null,
+  };
+
+  // ---------------------------------------------------------- lieu de base (cookie)
+  // Cookie fonctionnel déposé uniquement à la demande de l'utilisateur ; lu par ce seul navigateur.
+  const COOKIE = "efs_lieu_base";
+  const COOKIE_MAX_AGE = 365 * 24 * 3600;
+  const Base = {
+    read() {
+      try {
+        const m = document.cookie.split("; ").find((c) => c.startsWith(COOKIE + "="));
+        if (!m) return null;
+        const b = JSON.parse(decodeURIComponent(m.slice(COOKIE.length + 1)));
+        const ok = Number.isFinite(b?.lat) && Number.isFinite(b?.lon) && typeof b?.nom === "string"
+          && (b.t === "geo" || (b.t === "cp" && /^\d{5}$/.test(b.cp || "")));
+        return ok ? b : null;
+      } catch {
+        return null;
+      }
+    },
+    write(b, persistent) {
+      const secure = location.protocol === "https:" ? "; Secure" : "";
+      const age = persistent ? `; Max-Age=${COOKIE_MAX_AGE}` : ""; // sans Max-Age : effacé à la fermeture du navigateur
+      document.cookie = `${COOKIE}=${encodeURIComponent(JSON.stringify(b))}; Path=/; SameSite=Lax${age}${secure}`;
+      return Base.read() !== null; // faux si le navigateur refuse les cookies (fichier local, blocage)
+    },
+    clear() {
+      document.cookie = `${COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+    },
+  };
+
+  function currentAsBase() {
+    const c = state.center;
+    if (!c) return null;
+    if (c.cp) return { t: "cp", cp: c.cp, insee: state.insee, nom: c.label, lat: +c.lat.toFixed(5), lon: +c.lon.toFixed(5), p: !!state.base?.p };
+    return { t: "geo", nom: "Ma position", lat: +c.lat.toFixed(4), lon: +c.lon.toFixed(4), p: !!state.base?.p };
+  }
+  function isBase(center) {
+    const b = state.base;
+    if (!b || !center) return false;
+    return C.haversineKm(b.lat, b.lon, center.lat, center.lon) < 0.5;
+  }
+  function baseLabel(b) {
+    return b.t === "cp" ? `${b.nom} (${b.cp})` : "ma position enregistrée";
+  }
+
+  // ------------------------------------------------------------ utilitaires DOM
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    applyAttrs(el, attrs, false);
+    append(el, kids);
+    return el;
+  }
+  function s(tag, attrs, ...kids) {
+    const el = document.createElementNS(SVG, tag);
+    applyAttrs(el, attrs, true);
+    append(el, kids);
+    return el;
+  }
+  function applyAttrs(el, attrs, isSvg) {
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === "class") isSvg ? el.setAttribute("class", v) : (el.className = v);
+      else if (k === "style") Object.assign(el.style, v);
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? "" : String(v));
+    }
+  }
+  function append(el, kids) {
+    for (const k of kids.flat(Infinity)) {
+      if (k === null || k === undefined || k === false) continue;
+      el.append(k instanceof Node ? k : document.createTextNode(String(k)));
+    }
+  }
+  function mount(id, ...nodes) {
+    const host = $(id);
+    host.replaceChildren(...nodes.flat().filter(Boolean));
+  }
+  const safeUrl = (u) => (typeof u === "string" && /^https:\/\//i.test(u) ? u : null);
+  const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
+  const km = (v) => `${nf.format(v)} km`;
+  const pct = (v) => `${Math.round(v)} %`;
+
+  const fDateLong = new Intl.DateTimeFormat("fr-FR", { timeZone: C.TZ, weekday: "long", day: "numeric", month: "long" });
+  const fWd = new Intl.DateTimeFormat("fr-FR", { timeZone: C.TZ, weekday: "short" });
+  const fDay = new Intl.DateTimeFormat("fr-FR", { timeZone: C.TZ, day: "numeric" });
+  const fMon = new Intl.DateTimeFormat("fr-FR", { timeZone: C.TZ, month: "short" });
+  const fShort = new Intl.DateTimeFormat("fr-FR", { timeZone: C.TZ, day: "2-digit", month: "2-digit" });
+  const fTime = new Intl.DateTimeFormat("fr-FR", { timeZone: C.TZ, hour: "2-digit", minute: "2-digit" });
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+  function daysUntil(c) {
+    const today = C.parisDate(parisYmd(new Date()), { h: 12, m: 0 });
+    const day = C.parisDate(c.jour, { h: 12, m: 0 });
+    return Math.round((day - today) / 864e5);
+  }
+  function parisYmd(d) {
+    const [y, mo, dd] = new Intl.DateTimeFormat("en-CA", { timeZone: C.TZ }).format(d).split("-").map(Number);
+    return { y, mo, d: dd };
+  }
+  function relDay(n) {
+    if (n <= 0) return "aujourd’hui";
+    if (n === 1) return "demain";
+    return `dans ${n} jours`;
+  }
+
+  // ------------------------------------------------------------------ réseau
+  class ApiError extends Error {
+    constructor(kind, details) {
+      super(kind === "efs" ? "L’API de l’EFS n’a pas répondu." : "L’API Géo n’a pas répondu.");
+      this.kind = kind;
+      this.details = details;
+    }
+  }
+
+  async function fetchJson(kind, query) {
+    const urls = ENDPOINTS[kind];
+    const order = [preferred[kind], ...urls.keys()].filter((v, i, a) => a.indexOf(v) === i);
+    const details = [];
+    for (const i of order) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const resp = await fetch(`${urls[i]}?${query}`, { headers: { Accept: "application/json" }, signal: ctrl.signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch { throw new Error("réponse non JSON"); }
+        preferred[kind] = i;
+        return data;
+      } catch (err) {
+        const msg = err.name === "AbortError" ? "délai dépassé" : err.message || String(err);
+        details.push(`${i === 0 ? "via le proxy local" : "en direct"} : ${msg}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw new ApiError(kind, details);
+  }
+
+  async function searchCommunes(cp) {
+    const raw = state.demo
+      ? window.EFS_DEMO.geo
+      : await fetchJson("geo", new URLSearchParams({ codePostal: cp, fields: "nom,centre,code", format: "json" }).toString());
+    return (Array.isArray(raw) ? raw : [])
+      .map((c) => ({ nom: c.nom, code: c.code, lon: c.centre?.coordinates?.[0], lat: c.centre?.coordinates?.[1] }))
+      .filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon))
+      .sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
+  }
+
+  function demoPayload() {
+    const d = window.EFS_DEMO;
+    const ref = Date.UTC(...d.refDate.split("-").map((v, i) => (i === 1 ? v - 1 : +v)));
+    const t = parisYmd(new Date());
+    const offset = Math.round((Date.UTC(t.y, t.mo - 1, t.d) - ref) / 864e5);
+    const shift = (str) => {
+      const m = String(str).match(/^(\d{4})-(\d{2})-(\d{2})(.*)$/);
+      if (!m) return str;
+      const x = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + offset));
+      return x.toISOString().slice(0, 10) + m[4];
+    };
+    const payload = JSON.parse(JSON.stringify(d.efs));
+    for (const loc of payload.samplingLocationCollections || []) {
+      for (const col of loc.collections || []) col.date = shift(col.date);
+    }
+    return payload;
+  }
+
+  // -------------------------------------------------------------- orchestration
+  function readForm() {
+    state.cp = $("cp").value.trim();
+    state.radius = +$("rayon").value;
+    state.don = $("don").value;
+    state.horizon = +$("horizon").value;
+    state.pro = $("pro").checked;
+    state.rdvOnly = $("rdv").checked;
+  }
+
+  function setBusy(b) {
+    state.busy = b;
+    for (const id of ["go", "geoloc", "demo"]) $(id).disabled = b;
+    $("go").textContent = b ? "Recherche…" : "Rechercher";
+  }
+
+  async function onSubmit(ev) {
+    if (ev) {
+      ev.preventDefault();
+      if (state.demo) { state.demo = false; state.cpLoaded = null; $("notice").replaceChildren(); }
+    }
+    readForm();
+    $("cp-err").textContent = "";
+    if (!/^\d{5}$/.test(state.cp)) {
+      $("cp-err").textContent = "Saisissez un code postal à 5 chiffres.";
+      $("cp").focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      if (state.cpLoaded !== state.cp || !state.communes.length) {
+        state.communes = await searchCommunes(state.cp);
+        state.cpLoaded = state.cp;
+        if (!state.communes.length) {
+          state.center = null;
+          fillCommunes();
+          $("cp-err").textContent = "Aucune commune ne correspond à ce code postal.";
+          return;
+        }
+        if (!state.communes.some((c) => c.code === state.insee)) state.insee = state.communes[0].code;
+        fillCommunes();
+      }
+      selectCommune();
+      await loadCollectes();
+    } catch (err) {
+      showError(err);
+      if (!state.result) renderEmptyAll();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function fillCommunes() {
+    const sel = $("commune");
+    sel.replaceChildren(...state.communes.map((c) => h("option", { value: c.code, selected: c.code === state.insee }, c.nom)));
+    $("commune-field").hidden = state.communes.length < 2;
+  }
+
+  function selectCommune() {
+    const c = state.communes.find((x) => x.code === state.insee) || state.communes[0];
+    state.insee = c.code;
+    state.center = { lat: c.lat, lon: c.lon, label: c.nom, cp: state.cp };
+  }
+
+  async function loadCollectes({ silent = false } = {}) {
+    if (!state.center) return;
+    if (!silent) showLoading();
+    try {
+      state.raw = state.demo
+        ? demoPayload()
+        : await fetchJson("efs", C.efsQuery(state.center.lat, state.center.lon, state.radius, 100));
+      state.fetchedAt = new Date();
+      state.error = null;
+      $("notice").replaceChildren();
+    } catch (err) {
+      showError(err);
+      if (!state.raw) { renderEmptyAll(); return; }
+    }
+    reparse();
+    syncUrl();
+    scheduleRefresh();
+  }
+
+  function reparse() {
+    if (!state.raw || !state.center) return;
+    state.result = C.parseCollections(state.raw, {
+      centerLat: state.center.lat, centerLon: state.center.lon, radiusKm: state.radius,
+      donType: state.don, includePro: state.pro, horizonDays: state.horizon, now: new Date(),
+    });
+    renderAll();
+  }
+
+  function scheduleRefresh() {
+    clearInterval(state.timer);
+    if (!state.demo) state.timer = setInterval(() => loadCollectes({ silent: true }), REFRESH_MS);
+  }
+
+  function syncUrl() {
+    const p = new URLSearchParams();
+    if (state.demo) p.set("demo", "1");
+    if (state.cp) p.set("cp", state.cp);
+    if (state.insee && state.communes.length > 1) p.set("insee", state.insee);
+    if (state.center && state.center.label === "Ma position") {
+      p.delete("cp"); p.delete("insee");
+      p.set("lat", state.center.lat.toFixed(4)); p.set("lon", state.center.lon.toFixed(4));
+    }
+    p.set("r", state.radius);
+    if (state.don !== "sang") p.set("don", state.don);
+    if (state.horizon !== 60) p.set("h", state.horizon);
+    if (state.pro) p.set("pro", "1");
+    if (state.rdvOnly) p.set("rdv", "1");
+    if (state.communeVue !== "auto") p.set("vc", state.communeVue);
+    history.replaceState(null, "", `${location.pathname}?${p}${location.hash}`);
+  }
+
+  // ------------------------------------------------------------------ messages
+  function showLoading() {
+    for (const id of ["v1", "v2", "v3"]) {
+      if (!state.result) mount(id, h("div", { class: "skeleton", "aria-hidden": "true" }));
+    }
+    $("status").replaceChildren(h("span", null, "Interrogation de l’API de l’EFS…"));
+  }
+
+  function showError(err) {
+    state.error = err;
+    const isEfs = err instanceof ApiError && err.kind === "efs";
+    const kept = isEfs && state.result;
+    $("notice").replaceChildren(
+      h("div", { class: "notice error", role: "alert" },
+        h("p", null, h("strong", null, err.message || "Erreur inattendue."), kept ? " Les dernières données valides restent affichées." : ""),
+        h("p", null, isEfs
+          ? "Si la page est servie sans le proxy fourni (par exemple depuis le dossier www de Home Assistant), le navigateur peut bloquer l’appel direct à l’API (règle CORS). L’hébergement Docker du kit résout ce point."
+          : "Vérifiez la connexion Internet du poste, puis relancez la recherche."),
+        err.details ? h("p", { class: "muted" }, "Détail : ", err.details.join(" ; ")) : null,
+        h("p", null, h("button", { class: "btn secondary", type: "button", onclick: startDemo }, "Afficher les données de démonstration")),
+      ),
+    );
+    renderStatus();
+  }
+
+  function renderStatus() {
+    const st = $("status");
+    if (!state.result) { st.replaceChildren(); return; }
+    const r = state.result;
+    const dot = state.demo ? "demo" : state.error ? "err" : "";
+    const parts = [
+      state.demo ? "Mode démonstration (réponses enregistrées)" : `Données EFS de ${fTime.format(state.fetchedAt)}`,
+      `${state.center.label}${state.center.cp && state.center.label !== "Ma position" ? ` (${state.center.cp})` : ""}${isBase(state.center) ? " – lieu de base" : ""}`,
+      `rayon ${state.radius} km`,
+      `${visibles().length} collecte${visibles().length > 1 ? "s" : ""}${state.rdvOnly ? " avec rendez-vous possible" : ""}`,
+    ];
+    if (r.rejets.length) parts.push(`${r.rejets.length} lieu${r.rejets.length > 1 ? "x" : ""} écarté${r.rejets.length > 1 ? "s" : ""} (hors rayon ou incohérent)`);
+    mount("status",
+      h("span", null, h("span", { class: `dot ${dot}`, "aria-hidden": "true" }), parts.join(" · ")),
+      state.demo ? null : h("button", { class: "btn ghost", type: "button", onclick: () => loadCollectes() }, "Actualiser"),
+    );
+  }
+
+  // ------------------------------------------------------------------- rendus
+  /** Collectes affichées : celles de la recherche, éventuellement réduites aux rendez-vous ouverts. */
+  function visibles() {
+    const list = state.result.collectes;
+    return state.rdvOnly ? list.filter((c) => c.statut === C.STATUT.OUVERT) : list;
+  }
+  const cle = (s) => String(s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Graphie usuelle des communes : « BRETTEVILLE SUR ODON » → « Bretteville-sur-Odon ».
+  const PETITS_MOTS = new Set(["sur", "sous", "en", "le", "la", "les", "de", "du", "des", "aux", "au", "et", "lès", "lez"]);
+  const titreCommune = (s) => {
+    const mots = String(s || "").toLowerCase().trim()
+      .replace(/(^|[\s-])([ld])[\s-]+(?=[a-zà-ÿ])/g, "$1$2'") // « L ORGUEILLEUSE » → « l'Orgueilleuse »
+      .split(/[\s-]+/).filter(Boolean);
+    const forme = mots.map((m, i) => {
+      if (i > 0 && PETITS_MOTS.has(m)) return m;
+      return m.replace(/^([dl]['’])?(.)/, (x, el, c) => (el ? (i > 0 ? el : el.toUpperCase()) : "") + c.toUpperCase());
+    });
+    // Les noms composés s'écrivent avec des traits d'union, sauf l'article initial (« Le Fresne-Camilly »).
+    const article = forme.length > 1 && ["Le", "La", "Les"].includes(forme[0]);
+    return article ? `${forme[0]} ${forme.slice(1).join("-")}` : forme.join("-");
+  };
+
+  function fillVueCommune() {
+    const sel = $("vue-commune");
+    const groupes = new Map();
+    for (const c of visibles()) {
+      const nom = c.commune || c.lieu;
+      const k = cle(nom);
+      if (!groupes.has(k)) groupes.set(k, { nom, dates: [] });
+      groupes.get(k).dates.push(fShort.format(c.debut));
+    }
+    const opts = [h("option", { value: "auto" }, "Prochaine collecte (la plus proche dans le temps)")];
+    for (const [k, g] of groupes) {
+      opts.push(h("option", { value: k }, `${titreCommune(g.nom)} · ${g.dates.slice(0, 4).join(", ")}${g.dates.length > 4 ? "…" : ""}`));
+    }
+    if (state.communeVue !== "auto" && !groupes.has(state.communeVue)) {
+      opts.push(h("option", { value: state.communeVue }, `${titreCommune(state.communeVue)} · aucune collecte ${state.rdvOnly ? "avec rendez-vous possible" : "à venir"}`));
+    }
+    sel.replaceChildren(...opts);
+    sel.value = state.communeVue;
+  }
+
+  function renderAll() {
+    renderStatus();
+    renderBase();
+    fillVueCommune();
+    renderV1();
+    renderV2();
+    renderV3();
+  }
+  function renderEmptyAll() {
+    const msg = h("div", { class: "card empty" }, "Aucune donnée à afficher pour le moment.");
+    mount("v1", msg.cloneNode(true)); mount("v2", msg.cloneNode(true)); mount("v3", msg);
+  }
+  function emptyCard() {
+    return h("div", { class: "card empty" },
+      `Aucune collecte dans les ${state.horizon} prochains jours à moins de ${state.radius} km. `,
+      "Élargissez le rayon ou l’horizon.");
+  }
+
+  function statusChip(c) {
+    if (c.statut === C.STATUT.COMPLET) return h("span", { class: "chip full" }, "Complet");
+    if (c.statut === C.STATUT.NON_OUVERT) return h("span", { class: "chip neutral" }, "Planning non ouvert");
+    return h("span", { class: "chip ok" }, "Planning ouvert");
+  }
+  function directionsUrl(c) {
+    const o = state.center;
+    return `https://www.openstreetmap.org/directions?route=${o.lat.toFixed(5)}%2C${o.lon.toFixed(5)}%3B${c.latitude.toFixed(5)}%2C${c.longitude.toFixed(5)}`;
+  }
+  function osmUrl(lat, lon) {
+    return `https://www.openstreetmap.org/?mlat=${lat.toFixed(5)}&mlon=${lon.toFixed(5)}#map=16/${lat.toFixed(5)}/${lon.toFixed(5)}`;
+  }
+  function dropIcon() {
+    return s("svg", { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2,
+      "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" },
+    s("path", { d: "M12 2.7c3.6 4.6 6 8 6 11.3a6 6 0 0 1-12 0c0-3.3 2.4-6.7 6-11.3z" }));
+  }
+  function pinIcon() {
+    return s("svg", { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2,
+      "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", class: "muted" },
+    s("path", { d: "M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21z" }), s("circle", { cx: 12, cy: 9.5, r: 2.5 }));
+  }
+
+  // Visuel 1 – synthèse
+  function renderV1() {
+    const list = visibles();
+    const now = new Date();
+    // Par défaut la prochaine collecte du calendrier ; sinon la prochaine dans la commune choisie.
+    const voulue = state.communeVue !== "auto" ? state.communeVue : null;
+    const dansCommune = voulue ? list.find((x) => x.fin > now && cle(x.commune || x.lieu) === voulue) : null;
+    const c = dansCommune || C.nextCollecte(list, now);
+    if (!c) { mount("v1", emptyCard()); return; }
+    const remplacee = voulue && !dansCommune
+      ? h("div", { class: "notice inline" }, h("p", null,
+        `Aucune collecte à venir à ${titreCommune(voulue)}${state.rdvOnly ? " avec rendez-vous possible" : ""} : la prochaine collecte est affichée.`))
+      : null;
+    const open = c.placesRestantes !== null;
+    const rdv = c.statut === C.STATUT.OUVERT ? safeUrl(c.lienRdv) : null;
+    const others = list.length - 1;
+
+    const card = h("article", { class: "card v1", "aria-label": "Prochaine collecte" },
+      h("div", { class: "row" },
+        h("div", { class: "row", style: { justifyContent: "flex-start" } },
+          h("div", { class: "icon" }, dropIcon()), h("strong", { style: { fontSize: "17px" } }, "Don du sang")),
+        h("span", { class: "chip neutral" }, C.DON_FIELDS[state.don].label)),
+      h("div", null,
+        h("div", { class: "kicker" }, `${dansCommune ? `Prochaine collecte à ${titreCommune(c.commune || c.lieu)}` : "Prochaine collecte"} · ${relDay(daysUntil(c))}`),
+        h("div", { class: "date" }, cap(fDateLong.format(c.debut))),
+        h("div", { style: { color: "var(--text-2)" } }, c.horaires)),
+      h("div", { class: "place" }, pinIcon(),
+        h("div", null,
+          h("strong", null, [c.lieu, titreCommune(c.commune)].filter(Boolean).join(" · ")),
+          h("div", { class: "muted", style: { fontSize: "14px" } }, [c.adresse, km(c.distance)].filter(Boolean).join(" · ")))),
+      open
+        ? h("div", null,
+          h("div", { class: "row", style: { alignItems: "baseline" } },
+            h("div", null, h("span", { class: "big" }, c.placesRestantes), " ",
+              h("span", { style: { color: "var(--text-2)" } }, c.placesTotales ? `places restantes sur ${c.placesTotales}` : "places restantes")),
+            statusChip(c)),
+          c.taux !== null
+            ? [h("div", { class: "bar", style: { margin: "10px 0 8px" }, role: "img", "aria-label": `${pct(c.taux)} des places réservées` },
+              h("span", { style: { width: `${Math.min(100, c.taux)}%` } })),
+            h("div", { class: "row muted", style: { fontSize: "13px" } },
+              h("span", null, `Taux de remplissage ${pct(c.taux)}`),
+              c.placesReservees !== null ? h("span", null, `${c.placesReservees} réservées`) : null)]
+            : null)
+        : h("div", { class: "row" },
+          h("span", { style: { color: "var(--text-2)" } }, "Les rendez-vous ne sont pas encore ouverts pour cette collecte."),
+          statusChip(c)),
+      h("div", { class: "btns" },
+        rdv
+          ? h("a", { class: "btn primary block", href: rdv, target: "_blank", rel: "noopener" }, "Prendre rendez-vous")
+          : h("a", { class: "btn secondary block", href: "https://dondesang.efs.sante.fr", target: "_blank", rel: "noopener" }, "Site de l’EFS"),
+        h("a", { class: "btn secondary", href: directionsUrl(c), target: "_blank", rel: "noopener" }, "Itinéraire")),
+      h("div", { class: "row muted", style: { fontSize: "12px", borderTop: "1px solid var(--line)", paddingTop: "12px" } },
+        h("span", null, state.demo ? "Données de démonstration" : `Mis à jour à ${fTime.format(state.fetchedAt)}`),
+        h("span", null, others > 0 ? `${others} autre${others > 1 ? "s" : ""} collecte${others > 1 ? "s" : ""} dans ${state.radius} km` : "Seule collecte de l’horizon")),
+    );
+
+    const ouverts = list.filter((x) => x.placesRestantes !== null && x.placesRestantes > 0);
+    const dispo = ouverts.reduce((a, x) => a + x.placesRestantes, 0);
+    const proche = list.reduce((a, x) => (!a || x.distance < a.distance ? x : a), null);
+    const fact = (k, v, sub) => h("div", { class: "fact" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v), h("div", { class: "s" }, sub));
+    const facts = h("div", { class: "facts" },
+      fact("Collectes à venir", list.length, `sur ${state.horizon} jours`),
+      fact("Rendez-vous possibles", ouverts.length, ouverts.length ? "collectes au planning ouvert" : "aucun planning ouvert"),
+      fact("Places disponibles", dispo, "cumul des collectes ouvertes"),
+      fact("Collecte la plus proche", km(proche.distance), titreCommune(proche.commune || proche.lieu)),
+    );
+    mount("v1", remplacee, h("div", { class: "v1-layout" }, card, facts));
+  }
+
+  // Visuel 2 – agenda
+  function renderV2() {
+    const list = visibles();
+    if (!list.length) { mount("v2", emptyCard()); return; }
+    const shown = state.showAll ? list : list.slice(0, AGENDA_LIMIT);
+    const items = shown.map((c) => {
+      const rdv = safeUrl(c.lienRdv);
+      let right;
+      if (c.statut === C.STATUT.OUVERT) {
+        right = [
+          h("span", null, c.placesTotales ? `${c.placesRestantes} / ${c.placesTotales}` : `${c.placesRestantes} places`),
+          c.taux !== null ? h("div", { class: "bar", role: "img", "aria-label": `${pct(c.taux)} réservées` }, h("span", { style: { width: `${Math.min(100, c.taux)}%` } })) : null,
+          rdv ? h("a", { href: rdv, target: "_blank", rel: "noopener" }, "Rendez-vous") : null,
+        ];
+      } else {
+        right = statusChip(c);
+      }
+      const pro = C.isProfessional(c.nature);
+      return h("li", null,
+        h("div", { class: "d" }, h("small", null, fWd.format(c.debut)), h("strong", null, fDay.format(c.debut)), h("em", null, fMon.format(c.debut))),
+        h("div", { class: "who" },
+          h("b", null, titreCommune(c.commune || c.lieu)),
+          h("span", null, [c.lieu, km(c.distance), pro ? "réservée (professionnelle)" : null].filter(Boolean).join(" · ")),
+          h("span", null, c.horaires)),
+        h("div", { class: "st" }, right));
+    });
+    const more = list.length > AGENDA_LIMIT
+      ? h("div", { class: "more" }, h("button", {
+        class: "btn secondary", type: "button",
+        onclick: () => { state.showAll = !state.showAll; renderV2(); },
+      }, state.showAll ? "Réduire la liste" : `Afficher les ${list.length - AGENDA_LIMIT} autres collectes`))
+      : null;
+    mount("v2", h("article", { class: "card", "aria-label": "Agenda des collectes" },
+      h("div", { class: "row", style: { alignItems: "baseline", paddingBottom: "6px" } },
+        h("strong", { style: { fontSize: "19px" } }, "Collectes à venir"),
+        h("span", { class: "muted", style: { fontSize: "13px" } }, `${list.length} · rayon ${state.radius} km · ${state.horizon} jours`)),
+      h("ul", { class: "agenda" }, items),
+      more));
+  }
+
+  // Visuel 3 – carte, jauge, remplissage
+  function renderV3() {
+    const r = { ...state.result, collectes: visibles() };
+    const map = buildMap(r);
+    const now = new Date();
+    const gaugeTarget = r.collectes.find((c) => c.fin > now && c.taux !== null);
+    const filled = r.collectes.filter((c) => c.taux !== null).slice(0, 6);
+
+    const gauge = h("article", { class: "card", "aria-label": "Jauge de remplissage" },
+      gaugeTarget
+        ? [h("strong", { style: { fontSize: "16px" } }, `Remplissage · ${titreCommune(gaugeTarget.commune || gaugeTarget.lieu)}`),
+          h("div", { class: "muted", style: { fontSize: "13px" } }, `${cap(fDateLong.format(gaugeTarget.debut))} · prochaine collecte aux rendez-vous ouverts`),
+          buildGauge(gaugeTarget)]
+        : [h("strong", { style: { fontSize: "16px" } }, "Remplissage"),
+          h("p", { class: "muted" }, "Aucune collecte au planning ouvert pour l’instant.")]);
+
+    const fills = h("article", { class: "card", "aria-label": "Remplissage des prochaines collectes" },
+      h("div", { class: "row", style: { alignItems: "baseline" } },
+        h("strong", { style: { fontSize: "16px" } }, "Places réservées par collecte"),
+        h("span", { class: "muted", style: { fontSize: "13px" } }, `${filled.length} au planning ouvert`)),
+      filled.length
+        ? h("ul", { class: "fill-list" }, filled.map((c) => h("li", null,
+          h("div", { class: "row" },
+            h("span", null, `${fShort.format(c.debut)} · ${titreCommune(c.commune || c.lieu)}`),
+            h("span", { class: "muted" }, c.placesTotales ? `${c.placesRestantes} / ${c.placesTotales} libres` : pct(c.taux))),
+          h("div", { class: "bar", role: "img", "aria-label": `${pct(c.taux)} réservées` }, h("span", { style: { width: `${Math.min(100, c.taux)}%` } })))))
+        : h("p", { class: "muted" }, "Les compteurs apparaîtront à l’ouverture des plannings."));
+
+    mount("v3", h("div", { class: "v3" }, map, h("div", { class: "side" }, gauge, fills)));
+  }
+
+  function buildGauge(c) {
+    const p = Math.max(0, Math.min(100, c.taux)) / 100;
+    const a = Math.PI - p * Math.PI;
+    const x = (100 + 80 * Math.cos(a)).toFixed(1);
+    const y = (100 - 80 * Math.sin(a)).toFixed(1);
+    return s("svg", { class: "gauge", viewBox: "0 0 200 116", role: "img", "aria-label": `Jauge : ${pct(c.taux)} des places réservées`, style: { maxWidth: "260px", margin: "8px auto 0" } },
+      s("path", { class: "gauge-bg", d: "M20 100 A80 80 0 0 1 180 100" }),
+      p > 0 ? s("path", { class: "gauge-fg", d: `M20 100 A80 80 0 0 1 ${x} ${y}` }) : null,
+      s("text", { x: 100, y: 92, "text-anchor": "middle", "font-size": 30, class: "svg-strong" }, pct(c.taux)),
+      s("text", { x: 100, y: 112, "text-anchor": "middle", "font-size": 11, class: "svg-muted" },
+        c.placesReservees !== null && c.placesTotales ? `${c.placesReservees} réservées / ${c.placesTotales}` : ""));
+  }
+
+  function buildMap(r) {
+    const W = 512, H = 480, CX = 256, CY = 240, RPX = 200;
+    const o = state.center;
+    const scale = RPX / state.radius;
+    const cosLat = Math.cos((o.lat * Math.PI) / 180);
+    const proj = (lat, lon) => [CX + (lon - o.lon) * 111 * cosLat * scale, CY - (lat - o.lat) * 111 * scale];
+
+    // Grille kilométrique
+    const step = [1, 2, 5, 10, 20, 25, 50].find((v) => state.radius / v <= 3) || 50;
+    const grid = [];
+    for (let k = -Math.floor(state.radius / step) * step; k <= state.radius; k += step) {
+      const p = CX + k * scale, q = CY + k * scale;
+      grid.push(s("line", { class: "map-grid", x1: p, y1: 0, x2: p, y2: H }), s("line", { class: "map-grid", x1: 0, y1: q, x2: W, y2: q }));
+    }
+
+    // Un marqueur par lieu, coloré selon sa prochaine collecte
+    const now = new Date();
+    const next = C.nextCollecte(r.collectes, now);
+    const byPlace = new Map();
+    for (const c of r.collectes) {
+      const k = `${c.lieu}|${c.latitude}|${c.longitude}`;
+      if (!byPlace.has(k)) byPlace.set(k, c);
+    }
+    const placed = [];
+    const markers = [];
+    for (const c of byPlace.values()) {
+      const [x, y] = proj(c.latitude, c.longitude);
+      const cls = c.statut === C.STATUT.OUVERT ? "mk-open" : c.statut === C.STATUT.COMPLET ? "mk-full" : "mk-closed";
+      const isNext = c === next;
+      const label = `${titreCommune(c.commune || c.lieu)} · ${fShort.format(c.debut)}${c.statut === C.STATUT.COMPLET ? " complet" : ""}`;
+      const right = x < W - 170;
+      let ly = y + 4;
+      for (let t = 0; t < 6 && placed.some((p) => Math.abs(p.y - ly) < 14 && Math.abs(p.x - x) < 170); t++) ly += 15;
+      placed.push({ x, y: ly });
+      markers.push(s("a", { href: osmUrl(c.latitude, c.longitude), target: "_blank", rel: "noopener" },
+        s("title", null, `${c.lieu}, ${c.commune || ""} – ${c.textePlaces}`),
+        s("circle", { cx: x.toFixed(1), cy: y.toFixed(1), r: isNext ? 11 : 8, class: `${cls}${isNext ? " mk-next" : ""}` }),
+        s("text", { class: "map-label", x: (right ? x + 14 : x - 14).toFixed(1), y: ly.toFixed(1), "text-anchor": right ? "start" : "end" }, label)));
+    }
+    const maisons = r.maisons.map((m) => {
+      const [x, y] = proj(m.latitude, m.longitude);
+      return s("a", { href: osmUrl(m.latitude, m.longitude), target: "_blank", rel: "noopener" },
+        s("title", null, `${m.nom} – horaires fixes`),
+        s("rect", { x: (x - 7).toFixed(1), y: (y - 7).toFixed(1), width: 14, height: 14, rx: 3, class: "mk-maison" }));
+    });
+
+    const svg = s("svg", { class: "map", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Carte des lieux de collecte dans un rayon de ${state.radius} km autour de ${o.label}`, style: { borderRadius: "12px" } },
+      s("rect", { class: "map-bg", x: 0, y: 0, width: W, height: H }),
+      grid,
+      s("circle", { class: "map-circle", cx: CX, cy: CY, r: RPX }),
+      s("text", { class: "map-small", x: CX, y: CY - RPX - 8, "text-anchor": "middle" }, `${state.radius} km`),
+      s("text", { class: "map-small", x: 12, y: H - 12 }, `Quadrillage : ${step} km`),
+      s("circle", { class: "map-home", cx: CX, cy: CY, r: 9 }),
+      s("path", { class: "map-home-roof", d: `M${CX - 5} ${CY + 2} L${CX} ${CY - 4} L${CX + 5} ${CY + 2} V${CY + 6} H${CX - 5} Z` }),
+      maisons, markers);
+
+    const dot = (cls, shape) => s("svg", { width: 12, height: 12, "aria-hidden": "true" },
+      shape === "rect" ? s("rect", { x: 1, y: 1, width: 10, height: 10, rx: 2, class: cls }) : s("circle", { cx: 6, cy: 6, r: 4.5, class: cls }));
+    return h("article", { class: "card", "aria-label": "Carte des collectes" },
+      h("div", { class: "row", style: { alignItems: "baseline", marginBottom: "12px" } },
+        h("strong", { style: { fontSize: "17px" } }, `Collectes dans un rayon de ${state.radius} km`),
+        h("span", { class: "muted", style: { fontSize: "13px" } }, `${byPlace.size} lieu${byPlace.size > 1 ? "x" : ""}`)),
+      svg,
+      h("div", { class: "legend" },
+        h("span", null, dot("mk-open"), "Planning ouvert"),
+        h("span", null, dot("mk-closed"), "Non ouvert"),
+        h("span", null, dot("mk-full"), "Complet"),
+        r.maisons.length ? h("span", null, dot("mk-maison", "rect"), "Maison du don") : null),
+      r.maisons.length
+        ? h("p", { class: "maisons" }, "Maisons du don (horaires fixes) : ", r.maisons.map((m) => `${m.nom} (${km(m.distance)})`).join(", "))
+        : null);
+  }
+
+  function renderBase() {
+    const b = state.base;
+    const here = state.center;
+    const pinSvg = s("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: "currentColor", "aria-hidden": "true" },
+      s("path", { d: "M12 2C8 2 5 5.1 5 9.1 5 14.5 12 22 12 22s7-7.5 7-12.9C19 5.1 16 2 12 2zm0 9.6a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" }));
+    const persist = h("label", { class: "check" },
+      h("input", { type: "checkbox", id: "base-persist", checked: b ? b.p : true }),
+      " Mémoriser sur cet appareil (cookie, 1 an)");
+    const btn = (label, onclick, cls = "secondary") => h("button", { class: `btn ${cls}`, type: "button", onclick }, label);
+    const parts = [];
+    if (b) {
+      parts.push(h("span", { class: "pin" }, pinSvg, `Lieu de base : ${baseLabel(b)}`));
+      const acts = [];
+      if (!isBase(here)) acts.push(btn("Revenir au lieu de base", goToBase));
+      if (here && !isBase(here) && !state.demo) acts.push(btn(`Remplacer par ${here.label}`, saveBase, "ghost"));
+      acts.push(btn("Oublier", forgetBase, "ghost"));
+      parts.push(h("div", { class: "actions-base" }, acts));
+      parts.push(h("p", { class: "note" }, b.p
+        ? "Enregistré dans un cookie de ce navigateur pour un an : la page s’ouvrira directement sur ce lieu."
+        : "Gardé pour cette session seulement : le cookie s’effacera à la fermeture du navigateur."));
+    } else {
+      parts.push(h("span", null, "Aucun lieu de base : la page s’ouvre sur le dernier lien utilisé ou sur 14760."));
+      if (here && !state.demo) {
+        parts.push(h("div", { class: "actions-base" }, btn(`Définir ${here.label} comme lieu de base`, saveBase), persist));
+      }
+    }
+    mount("base", parts);
+  }
+
+  function saveBase() {
+    const persistBox = $("base-persist");
+    const persistent = persistBox ? persistBox.checked : !!state.base?.p;
+    const b = { ...currentAsBase(), p: persistent };
+    if (!Base.write(b, persistent)) {
+      $("notice").replaceChildren(h("div", { class: "notice error", role: "alert" },
+        h("p", null, "Le navigateur a refusé le cookie (page ouverte depuis un fichier local, ou cookies bloqués pour ce site). Le lieu de base est gardé jusqu’à la fermeture de la page.")));
+    }
+    state.base = b;
+    renderBase();
+    renderStatus();
+  }
+
+  function forgetBase() {
+    Base.clear();
+    state.base = null;
+    renderBase();
+    renderStatus();
+  }
+
+  async function goToBase() {
+    const b = state.base;
+    if (!b) return;
+    state.demo = false;
+    state.communeVue = "auto";
+    if (b.t === "geo") {
+      readForm();
+      state.center = { lat: b.lat, lon: b.lon, label: "Ma position", cp: null };
+      await loadCollectes();
+      return;
+    }
+    $("cp").value = b.cp;
+    state.insee = b.insee || null;
+    state.cpLoaded = null;
+    await onSubmit();
+  }
+
+  // ---------------------------------------------------------------- actions
+  function startDemo() {
+    state.demo = true;
+    state.cpLoaded = null;
+    state.insee = null;
+    $("cp").value = window.EFS_DEMO.postalCode;
+    $("notice").replaceChildren(h("div", { class: "notice" },
+      h("p", null, "Mode démonstration : réponses enregistrées pour le code postal 14760, dates recalées sur aujourd’hui. Lancez une recherche avec un autre code postal pour revenir aux données réelles.")));
+    state.error = null;
+    onSubmit();
+  }
+
+  function useGeolocation() {
+    if (!window.isSecureContext || !navigator.geolocation) {
+      $("notice").replaceChildren(h("div", { class: "notice" },
+        h("p", null, "La géolocalisation du navigateur exige une page servie en HTTPS (ou depuis localhost). Saisissez un code postal à la place.")));
+      return;
+    }
+    setBusy(true);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      readForm();
+      state.demo = false;
+      state.center = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Ma position", cp: null };
+      await loadCollectes();
+      setBusy(false);
+    }, (err) => {
+      setBusy(false);
+      $("notice").replaceChildren(h("div", { class: "notice" }, h("p", null, `Position indisponible : ${err.message}`)));
+    }, { timeout: 15000, maximumAge: 600000 });
+  }
+
+  function init() {
+    const p = new URLSearchParams(location.search);
+    state.base = Base.read();
+    const viaUrl = p.has("cp") || p.has("lat") || p.get("demo") === "1";
+    const b = !viaUrl ? state.base : null;
+    $("cp").value = p.get("cp") || (b && b.t === "cp" ? b.cp : "14760");
+    $("rayon").value = Math.min(50, Math.max(1, +p.get("r") || 10));
+    if (["sang", "plasma", "plaquettes"].includes(p.get("don"))) $("don").value = p.get("don");
+    if (["30", "60", "90", "180"].includes(p.get("h"))) $("horizon").value = p.get("h");
+    $("pro").checked = p.get("pro") === "1";
+    $("rdv").checked = p.get("rdv") === "1";
+    state.communeVue = p.get("vc") ? cle(p.get("vc")) : "auto";
+    state.insee = p.get("insee") || (b && b.t === "cp" ? b.insee : null);
+    $("rayon-out").textContent = `${$("rayon").value} km`;
+
+    $("search").addEventListener("submit", onSubmit);
+    $("rayon").addEventListener("input", () => { $("rayon-out").textContent = `${$("rayon").value} km`; });
+    // Le rayon change le rectangle interrogé : nouvel appel. Les autres réglages filtrent la réponse déjà reçue.
+    $("rayon").addEventListener("change", () => { readForm(); if (state.center && !state.busy) loadCollectes(); });
+    for (const id of ["don", "horizon", "pro", "rdv"]) {
+      $(id).addEventListener("change", () => { readForm(); reparse(); syncUrl(); });
+    }
+    $("commune").addEventListener("change", (e) => {
+      state.insee = e.target.value; selectCommune(); readForm(); loadCollectes();
+    });
+    $("cp").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, "").slice(0, 5); });
+    $("demo").addEventListener("click", startDemo);
+    $("vue-commune").addEventListener("change", (e) => { state.communeVue = e.target.value; if (state.result) renderV1(); syncUrl(); });
+    $("geoloc").addEventListener("click", useGeolocation);
+
+    const lat = parseFloat(p.get("lat")), lon = parseFloat(p.get("lon"));
+    renderBase();
+    if (p.get("demo") === "1") startDemo();
+    else if (b && b.t === "geo") {
+      readForm();
+      state.center = { lat: b.lat, lon: b.lon, label: "Ma position", cp: null };
+      loadCollectes();
+    }
+    else if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      readForm();
+      state.center = { lat, lon, label: "Ma position", cp: null };
+      loadCollectes();
+    } else onSubmit();
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();

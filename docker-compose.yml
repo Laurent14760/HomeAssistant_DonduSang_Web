@@ -1,0 +1,21 @@
+# Page « Collectes de don du sang » : site statique + proxy vers les API EFS et Géo
+# Démarrage : docker compose up -d   →   http://<ip-du-serveur>:8080
+services:
+  efs-collectes:
+    image: nginx:1.27-alpine
+    container_name: efs-collectes
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
