@@ -6,11 +6,15 @@ Version 3.0 · compagnon de l’intégration [HomeAssistant_DonduSang](https://g
 
 ## Présentation visuelle
 
-### Page de recherche
+### Page complète
 
-Code postal, rayon d’action (0 à 50 km), nombre de jours (1 à 180) et type de don ; les trois visuels se mettent à jour : prochaine collecte et indicateurs, agenda, carte et remplissage.
+La page présente directement les trois vues : prochaine collecte et indicateurs, agenda, carte et remplissage. En haut, une ligne d’état rappelle le lieu, le rayon et le nombre de collectes.
 
-![Page de recherche : formulaire, prochaine collecte et indicateurs](images/page-recherche.png)
+![Page complète : prochaine collecte et indicateurs](images/page-recherche.png)
+
+Le bouton **⚙ Réglages** ouvre la sous-vue des paramètres : code postal, rayon d’action (0 à 50 km), nombre de jours (1 à 180), type de don, options et lieu de base. Elle se referme après la recherche (ou par « Fermer » / Échap).
+
+![Sous-vue « Paramètres de recherche » ouverte par ⚙ Réglages](images/page-parametres.png)
 
 ### Mode tablette
 

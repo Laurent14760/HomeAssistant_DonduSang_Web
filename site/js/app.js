@@ -1165,7 +1165,7 @@
     $("tablette-btn").addEventListener("click", () => enterTablette(Tab.read()));
     $("tab-quitter").addEventListener("click", exitTablette);
     $("tab-reglages").addEventListener("click", openReglages);
-    $("top-reglages").addEventListener("click", openReglages);
+    initParametres();
     initRdv();
     $("reg-form").addEventListener("submit", saveReglages);
     $("reg-annuler").addEventListener("click", () => $("reglages").close());
@@ -1179,6 +1179,38 @@
     }
   }
 
+  // ------------------------------------------------- paramètres (sous-vue de la page)
+  // Le formulaire de recherche n'est affiché que sur demande (« ⚙ Réglages ») : la page
+  // présente d'abord les trois vues. Il se referme après une recherche réussie.
+  function afficherParametres(ouvrir, { focus = true } = {}) {
+    const p = $("parametres");
+    p.hidden = !ouvrir;
+    $("top-reglages").setAttribute("aria-expanded", String(ouvrir));
+    if (ouvrir && focus) {
+      p.scrollIntoView({ block: "start", behavior: "smooth" });
+      $("cp").focus({ preventScroll: true });
+    }
+  }
+
+  /** Recherche lancée depuis le panneau : refermé si elle aboutit, ouvert sinon. */
+  async function rechercherDepuisPanneau(action) {
+    const ok = await action();
+    const erreurSaisie = $("cp-err").textContent || $("horizon-err").textContent;
+    if (ok !== false && !erreurSaisie && !state.error && state.result) {
+      afficherParametres(false);
+      $("top-reglages").focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  function initParametres() {
+    $("top-reglages").addEventListener("click", () => afficherParametres($("parametres").hidden));
+    $("param-fermer").addEventListener("click", () => { afficherParametres(false); $("top-reglages").focus(); });
+    $("parametres").addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { afficherParametres(false); $("top-reglages").focus(); }
+    });
+  }
+
   // ---------------------------------------------------------------- actions
   function startDemo() {
     state.demo = true;
@@ -1188,26 +1220,31 @@
     $("notice").replaceChildren(h("div", { class: "notice" },
       h("p", null, "Mode démonstration : réponses enregistrées pour le code postal 14760, dates recalées sur aujourd’hui. Lancez une recherche avec un autre code postal pour revenir aux données réelles.")));
     state.error = null;
-    onSubmit();
+    return onSubmit();
   }
 
+  /** Résout à vrai quand la position a servi à une recherche, à faux sinon (panneau laissé ouvert). */
   function useGeolocation() {
     if (!window.isSecureContext || !navigator.geolocation) {
       $("notice").replaceChildren(h("div", { class: "notice" },
         h("p", null, "La géolocalisation du navigateur exige une page servie en HTTPS (ou depuis localhost). Saisissez un code postal à la place.")));
-      return;
+      return Promise.resolve(false);
     }
     setBusy(true);
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      readForm();
-      state.demo = false;
-      state.center = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Ma position", cp: null };
-      await loadCollectes();
-      setBusy(false);
-    }, (err) => {
-      setBusy(false);
-      $("notice").replaceChildren(h("div", { class: "notice" }, h("p", null, `Position indisponible : ${err.message}`)));
-    }, { timeout: 15000, maximumAge: 600000 });
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        readForm();
+        state.demo = false;
+        state.center = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Ma position", cp: null };
+        await loadCollectes();
+        setBusy(false);
+        resolve(true);
+      }, (err) => {
+        setBusy(false);
+        $("notice").replaceChildren(h("div", { class: "notice" }, h("p", null, `Position indisponible : ${err.message}`)));
+        resolve(false);
+      }, { timeout: 15000, maximumAge: 600000 });
+    });
   }
 
   function init() {
@@ -1228,7 +1265,7 @@
     const rayonTexte = () => { $("rayon-out").textContent = +$("rayon").value === 0 ? "commune" : `${$("rayon").value} km`; };
     rayonTexte();
 
-    $("search").addEventListener("submit", onSubmit);
+    $("search").addEventListener("submit", (ev) => { ev.preventDefault(); rechercherDepuisPanneau(() => onSubmit(ev)); });
     $("rayon").addEventListener("input", rayonTexte);
     // Le rayon change le rectangle interrogé : nouvel appel. Les autres réglages filtrent la réponse déjà reçue.
     $("rayon").addEventListener("change", () => { readForm(); if (state.center && !state.busy) loadCollectes(); });
@@ -1240,9 +1277,9 @@
       state.insee = e.target.value; selectCommune(); readForm(); loadCollectes();
     });
     $("cp").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, "").slice(0, 5); });
-    $("demo").addEventListener("click", startDemo);
+    $("demo").addEventListener("click", () => rechercherDepuisPanneau(startDemo));
     $("vue-commune").addEventListener("change", (e) => { state.communeVue = e.target.value; if (state.result) renderV1(); syncUrl(); });
-    $("geoloc").addEventListener("click", useGeolocation);
+    $("geoloc").addEventListener("click", () => rechercherDepuisPanneau(useGeolocation));
 
     const lat = parseFloat(p.get("lat")), lon = parseFloat(p.get("lon"));
     renderBase();

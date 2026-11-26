@@ -93,14 +93,26 @@
 </dialog>
 
 <header class="wrap">
-  <div class="top-actions">
-    <button class="btn secondary" type="button" id="top-reglages">⚙ Réglages</button>
-    <button class="btn primary" type="button" id="tablette-btn">Mode tablette</button>
-  </div>
+  <div class="entete">
+    <div class="entete-titre">
   <p class="eyebrow brand"><svg class="logo" viewBox="34 0 188 256" aria-hidden="true"><path d="M128 2C120 16 38 104 38 166a90 90 0 0 0 180 0C218 104 136 16 128 2Z" fill="currentColor"/><path d="M74 158C72 190 92 216 124 224" fill="none" stroke="#fff" stroke-opacity=".8" stroke-width="14" stroke-linecap="round"/></svg>Don du sang · données EFS en direct</p>
   <h1>Les collectes près de chez vous</h1>
-  <p class="lead">Saisissez un code postal, un rayon et un nombre de jours : la page interroge l’API publique de l’Établissement français du sang et met à jour la prochaine collecte, l’agenda des semaines à venir, la carte et le remplissage des créneaux.</p>
+    </div>
+    <div class="top-actions">
+      <button class="btn secondary" type="button" id="top-reglages" aria-expanded="false" aria-controls="parametres">⚙ Réglages</button>
+      <button class="btn primary" type="button" id="tablette-btn">Mode tablette</button>
+    </div>
+  </div>
 
+  <!-- Paramètres de recherche : sous-vue affichée par le bouton « ⚙ Réglages » -->
+  <section class="panneau" id="parametres" hidden aria-labelledby="param-titre">
+  <div class="panneau-tete">
+    <div>
+      <h2 id="param-titre">Paramètres de recherche</h2>
+      <p class="lead">Code postal, rayon et nombre de jours : la page interroge l’API publique de l’Établissement français du sang et met à jour les trois vues.</p>
+    </div>
+    <button class="btn ghost" type="button" id="param-fermer">Fermer</button>
+  </div>
   <form class="search" id="search" novalidate>
     <div class="fields">
       <div class="f">
@@ -147,15 +159,10 @@
     </div>
     <div class="base" id="base" aria-live="polite"></div>
   </form>
+  </section>
 
   <div class="status" id="status" aria-live="polite"></div>
   <div id="notice"></div>
-
-  <nav class="toc" aria-label="Sommaire">
-    <a href="#synthese">1 · Prochaine collecte</a>
-    <a href="#agenda">2 · Agenda</a>
-    <a href="#suivi">3 · Carte et remplissage</a>
-  </nav>
 </header>
 
 <main class="wrap">
