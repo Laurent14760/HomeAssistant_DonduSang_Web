@@ -18,6 +18,10 @@ Le bouton **Mode tablette**, en haut à droite à côté de **⚙ Réglages**, b
 
 ![Mode tablette en paysage : prochaine collecte à la Salle polyvalente de Bretteville-sur-Odon](images/tablette-paysage.png)
 
+**Prendre un rendez-vous avec le donneur en face de soi** : « Prendre rendez-vous » (prochaine collecte) ou « Réserver » (autres collectes) ouvre le site de l’EFS dans une **fenêtre séparée**. La tablette affiche « Prise de rendez-vous en cours » ; une fois le créneau réservé, on ferme cette fenêtre — ou on touche « Fermer la fenêtre et revenir » — et l’on retrouve la tablette, places actualisées.
+
+![Prise de rendez-vous en cours depuis la tablette](images/tablette-rendez-vous.png)
+
 Le bouton **⚙ Réglages** ouvre une fenêtre simple pour changer le **lieu initial** (code postal, commune), le **rayon**, le **nombre de jours**, le type de don et le **lieu de collecte affiché**. La liste des lieux se met à jour à chaque changement. **Enregistrer** conserve ces réglages dans un cookie de la tablette (`efs_tablette`, un an) : elle rouvre la page directement en mode tablette, sur ce lieu.
 
 ![Fenêtre de réglages de la tablette](images/tablette-reglages.png)

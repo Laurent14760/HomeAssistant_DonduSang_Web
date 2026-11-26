@@ -901,7 +901,7 @@
         reglages()));
     } else {
       const ouvert = c.placesRestantes !== null;
-      const rdv = boutonRdv(c);
+      const rdv = boutonRdvTablette(c);
       const carte = h("article", { class: "card tab-carte", "aria-label": "Prochaine collecte" },
         h("div", { class: "row" },
           h("div", { class: "kicker" }, `${auLieu ? "Prochaine collecte ici" : "Prochaine collecte"} · ${relDay(daysUntil(c))}`),
@@ -926,9 +926,12 @@
           ? h("ul", null, suite.map((x) => h("li", null,
             h("div", { class: "d" }, h("small", null, fWd.format(x.debut)), h("strong", null, fDay.format(x.debut)), h("small", null, fMon.format(x.debut))),
             h("div", { class: "who" }, h("b", null, titreCommune(x.commune || x.lieu)), h("span", null, `${x.lieu} · ${x.horaires}`)),
-            h("div", { class: "pl" }, x.placesRestantes === null ? "—" : x.placesTotales ? `${x.placesRestantes}/${x.placesTotales}` : x.placesRestantes))))
+            h("div", { class: "pl" }, x.placesRestantes === null ? "—" : x.placesTotales ? `${x.placesRestantes}/${x.placesTotales}` : x.placesRestantes),
+            h("button", { class: "btn secondary resa", type: "button", onclick: () => ouvrirRdv(x),
+              "aria-label": `Réserver : ${titreCommune(x.commune || x.lieu)}, ${fDateLong.format(x.debut)}` }, "Réserver"))))
           : h("p", { class: "muted" }, "Aucune autre collecte dans la période."));
-      mount("tab-main", alerte, carte, suiteCarte);
+      const info = state.rdvInfo ? h("div", { class: "notice tab-info", role: "status" }, h("p", null, state.rdvInfo)) : null;
+      mount("tab-main", info, alerte, carte, suiteCarte);
     }
     mount("tab-pied",
       h("span", null, [
@@ -941,6 +944,89 @@
       state.tabPremier = false;
       openReglages();
     }
+  }
+
+  // ------------------------------------------------- rendez-vous depuis la tablette
+  // Le donneur est en face de la tablette : la réservation s'ouvre dans une fenêtre séparée
+  // (nouvel onglet sur téléphone ou tablette), la tablette affiche « Prise de rendez-vous en
+  // cours » et reprend la main à la fermeture de cette fenêtre, en actualisant les places.
+  const rdv = { win: null, timer: null, collecte: null };
+
+  function boutonRdvTablette(c) {
+    const r = rendezVous(c);
+    return {
+      bouton: h("button", { class: "btn primary block", type: "button", onclick: () => ouvrirRdv(c),
+        title: "Ouvre le site de l’EFS dans une fenêtre séparée ; la fermer ramène à la tablette" }, "Prendre rendez-vous"),
+      note: r.note ? h("p", { class: "rdv-note" }, r.note) : null,
+    };
+  }
+
+  function ouvrirRdv(c) {
+    const { url } = rendezVous(c);
+    rdv.collecte = c;
+    // Fenêtre déjà ouverte : on la réutilise pour la nouvelle collecte.
+    if (rdv.win && !rdv.win.closed) {
+      try { rdv.win.location.href = url; rdv.win.focus(); } catch { /* fenêtre d'un autre site : laissée telle quelle */ }
+      afficherRdvEnCours();
+      return;
+    }
+    const W = Math.min(1100, screen.availWidth || 1100), H = screen.availHeight || 900;
+    // La fenêtre garde son lien avec la tablette (pas de « noopener ») : c'est ce qui permet de
+    // savoir quand elle est fermée et de la fermer depuis la tablette. Elle ne charge que le
+    // site officiel de l'EFS (dondesang.efs.sante.fr ou ses liens courts efs.link).
+    const w = window.open(url, "efs-rendez-vous", `popup=yes,width=${W},height=${H},left=0,top=0`);
+    if (!w) {
+      // Fenêtres bloquées (navigateur kiosque, bloqueur) : ouverture dans un onglet classique.
+      window.open(url, "_blank", "noopener");
+      state.rdvInfo = "Le navigateur a bloqué la fenêtre de rendez-vous : elle s’est ouverte dans un nouvel onglet. Fermez-le une fois le rendez-vous pris.";
+      renderTablette();
+      return;
+    }
+    rdv.win = w;
+    afficherRdvEnCours();
+    clearInterval(rdv.timer);
+    rdv.timer = setInterval(surveillerRdv, 1000);
+  }
+
+  function afficherRdvEnCours() {
+    const c = rdv.collecte;
+    $("rdv-collecte").textContent = c
+      ? `Collecte : ${cap(fDateLong.format(c.debut))}, ${c.horaires}, ${nomLieu(c)}.`
+      : "";
+    if (!$("rdv-encours").open) $("rdv-encours").showModal();
+  }
+
+  function surveillerRdv() {
+    if (rdv.win && !rdv.win.closed) return;
+    finRdv();
+  }
+
+  function finRdv() {
+    clearInterval(rdv.timer);
+    rdv.timer = null;
+    rdv.win = null;
+    if ($("rdv-encours").open) $("rdv-encours").close();
+    // Les places ont pu changer : relecture immédiate (le relais garde 5 min en cache au plus).
+    state.rdvInfo = "Fenêtre de rendez-vous fermée : les places affichées sont actualisées.";
+    if (!state.demo && state.center) loadCollectes({ silent: true });
+    else renderTablette();
+    setTimeout(() => { state.rdvInfo = null; renderTablette(); }, 15000);
+  }
+
+  function initRdv() {
+    $("rdv-retour").addEventListener("click", () => {
+      if (rdv.win && !rdv.win.closed) rdv.win.focus();
+      else finRdv();
+    });
+    $("rdv-fermer").addEventListener("click", () => {
+      try { if (rdv.win && !rdv.win.closed) rdv.win.close(); } catch { /* ignoré */ }
+      finRdv();
+    });
+    // Échap ferme seulement l'encart : la surveillance continue tant que la fenêtre existe.
+    $("rdv-encours").addEventListener("cancel", (ev) => { if (rdv.win && !rdv.win.closed) ev.preventDefault(); });
+    // Retour sur la tablette (onglet réactivé) : vérification immédiate.
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && rdv.timer) surveillerRdv(); });
+    window.addEventListener("focus", () => { if (rdv.timer) surveillerRdv(); });
   }
 
   // ---------------------------------------------------------- fenêtre de réglages
@@ -1080,6 +1166,7 @@
     $("tab-quitter").addEventListener("click", exitTablette);
     $("tab-reglages").addEventListener("click", openReglages);
     $("top-reglages").addEventListener("click", openReglages);
+    initRdv();
     $("reg-form").addEventListener("submit", saveReglages);
     $("reg-annuler").addEventListener("click", () => $("reglages").close());
     $("reg-oublier").addEventListener("click", forgetReglages);

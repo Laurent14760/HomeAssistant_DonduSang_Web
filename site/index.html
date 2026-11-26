@@ -29,6 +29,19 @@
   <div class="tab-pied" id="tab-pied" aria-live="polite"></div>
 </section>
 
+<!-- Mode tablette : prise de rendez-vous dans une fenêtre séparée, pilotée depuis la tablette -->
+<dialog class="reglages rdv-encours" id="rdv-encours" aria-labelledby="rdv-titre">
+  <div class="rdv-corps">
+    <h2 id="rdv-titre">Prise de rendez-vous en cours</h2>
+    <p id="rdv-texte">La réservation se fait dans une fenêtre du site de l’Établissement français du sang. Une fois le rendez-vous pris, fermez cette fenêtre : vous revenez ici et les places sont actualisées.</p>
+    <p class="note" id="rdv-collecte"></p>
+    <div class="reg-actions">
+      <button class="btn primary" type="button" id="rdv-retour">Afficher la fenêtre de rendez-vous</button>
+      <button class="btn secondary" type="button" id="rdv-fermer">Fermer la fenêtre et revenir</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog class="reglages" id="reglages" aria-labelledby="reg-titre">
   <form id="reg-form" novalidate>
     <h2 id="reg-titre">Réglages de la tablette</h2>

@@ -234,4 +234,9 @@ dialog.reglages .note{margin:0;font-size:13px;color:var(--muted)}
 .reg-grid .f{grid-column:auto}
 .reg-grid .f.full{grid-column:1 / -1}
 .reg-actions{display:flex;flex-wrap:wrap;gap:10px}
+.rdv-corps{padding:28px;display:flex;flex-direction:column;gap:14px}
+.rdv-corps p{margin:0;font-size:17px;line-height:1.5}
+.rdv-corps .btn{min-height:56px;font-size:17px}
+.tab-suite .resa{min-height:40px;padding:0 12px;font-size:14px}
+.tab-info{grid-column:1 / -1;background:var(--ok-soft);color:var(--text)}
 @media (max-width:520px){.reg-grid{grid-template-columns:minmax(0,1fr)}}
