@@ -41,8 +41,9 @@ Règles de filtrage appliquées :
 
 ### Nouveautés de la version 3.0
 
-- **Mode tablette** (bouton « Mode tablette », ou adresse `…/?mode=tablette`). Affichage lisible de loin du **lieu de collecte choisi** : date, horaires, places restantes, jauge, bouton de rendez-vous, puis les autres collectes du secteur, l'heure et la mise à jour. Voir § 7.
+- **Mode tablette** (bouton « Mode tablette » en haut à droite, à côté de « ⚙ Réglages », ou adresse `…/?mode=tablette` ; « Page complète » ramène à la page normale). Affichage lisible de loin du **lieu de collecte choisi** : date, horaires, places restantes, jauge, bouton de rendez-vous, puis les autres collectes du secteur, l'heure et la mise à jour. Voir § 7.
 - **Réglages par bouton.** « ⚙ Réglages » ouvre une fenêtre avec le lieu initial (code postal, commune), le rayon, le nombre de jours, le type de don et le lieu de collecte affiché ; la liste des lieux se recalcule à chaque changement. « Enregistrer » les conserve dans le cookie `efs_tablette` (un an) ; la case « Ouvrir directement en mode tablette » fait démarrer la page en mode tablette sur cet appareil. « Oublier ces réglages » efface le cookie.
+- **Bouton « Prendre rendez-vous » toujours présent** sur la prochaine collecte (page et tablette) : lien direct quand le planning est ouvert, sinon page de réservation du site de l'EFS, avec une explication (planning non ouvert, collecte complète).
 - **Rayon 0 = uniquement la commune du code postal**, comme l'intégration Home Assistant 1.4.1 : la page interroge l'API à 10 km puis ne garde que les collectes de la commune. Le rayon 0 n'est pas proposé avec « Utiliser ma position » (pas de commune de référence).
 - **Nombre de jours** de 1 à 180 (champ libre, défaut 30) au lieu de l'ancienne liste 30/60/90/180. Une valeur hors bornes, ou un rayon hors 0–50 km dans les réglages, est signalée sous le champ et la recherche n'est pas lancée.
 - **Hébergement mutualisé** : relais PHP (`site/api/proxy.php`) et en-têtes de sécurité (`site/.htaccess`) pour publier la page sur un petit site web Apache + PHP, avec le même cache que nginx. Voir l'option D.
@@ -267,7 +268,8 @@ Ouvrir directement `index.html` par double-clic fonctionne généralement aussi,
 - [ ] L'affichage est correct sur téléphone et en mode sombre.
 - [ ] Rayon 0 avec 14760 : seules les collectes de Bretteville-sur-Odon restent ; le bandeau indique « Bretteville-sur-Odon seulement ».
 - [ ] Nombre de jours 200 : message sous le champ, aucune nouvelle recherche.
-- [ ] « Mode tablette » : la fenêtre de réglages s'ouvre ; choisir un lieu, « Enregistrer » ; recharger la page sans paramètre : elle s'ouvre en mode tablette sur ce lieu. « Quitter » revient à la page normale.
+- [ ] « Mode tablette » : la fenêtre de réglages s'ouvre ; choisir un lieu, « Enregistrer » ; recharger la page sans paramètre : elle s'ouvre en mode tablette sur ce lieu. « Page complète » revient à la page normale ; « Mode tablette » (en haut à droite) y retourne.
+- [ ] « Prendre rendez-vous » : collecte au planning ouvert → lien direct de la collecte ; collecte complète ou planning non ouvert → page de réservation du site de l'EFS, avec une phrase d'explication sous le bouton.
 - [ ] Option D : les deux adresses de vérification du relais renvoient du JSON.
 
 ## 5. Tests
@@ -289,8 +291,9 @@ Neuf scénarios portent sur la réponse enregistrée : géométrie, critères de
 1. Sur la tablette, ouvrir la page publiée (option B ou D, de préférence en HTTPS), puis toucher **Mode tablette** — ou ouvrir directement `https://collectes.mondomaine.fr/?mode=tablette` et l'enregistrer en favori.
 2. La fenêtre **Réglages de la tablette** s'ouvre au premier usage. Exemple : code postal `14760`, rayon `10`, nombre de jours `30`, type « Sang total », lieu de collecte « Salle polyvalente · Bretteville-sur-Odon ». Si le lieu voulu n'apparaît pas, augmenter le nombre de jours : la liste se recalcule aussitôt.
 3. Laisser cochée **Ouvrir directement en mode tablette sur cet appareil**, puis **Enregistrer**. Les réglages sont conservés un an dans le cookie `efs_tablette` de ce navigateur.
-4. Pour modifier le lieu initial, le rayon ou le nombre de jours : bouton **⚙ Réglages** en haut à droite. **Quitter** revient à la page normale pour la visite en cours, sans effacer les réglages ; « Oublier ces réglages » les efface.
-5. Affichage permanent (facultatif) :
+4. Pour modifier le lieu initial, le rayon ou le nombre de jours : bouton **⚙ Réglages** en haut à droite. **Page complète** revient à la page normale pour la visite en cours, sans effacer les réglages ; sur la page normale, les boutons **⚙ Réglages** et **Mode tablette**, côte à côte en haut à droite, permettent de régler la tablette et d'y revenir en un clic. « Oublier ces réglages » efface le cookie.
+5. **Prendre rendez-vous** : le bouton de la prochaine collecte ouvre le site de l'EFS dans un nouvel onglet. Planning ouvert : lien direct vers la collecte affichée, pour bloquer un créneau. Planning non encore ouvert ou collecte complète : page de réservation de l'EFS (« Trouver une collecte »), avec une phrase qui l'explique sous le bouton.
+6. Affichage permanent (facultatif) :
    - Android : ajouter la page à l'écran d'accueil (menu ⋮ → *Ajouter à l'écran d'accueil*), ou utiliser une application kiosque (*Fully Kiosk Browser*) avec l'adresse `…/?mode=tablette` et l'écran toujours allumé ;
    - iPad : Safari → Partager → *Sur l'écran d'accueil*, et *Accès guidé* (Réglages → Accessibilité) pour verrouiller l'écran sur la page.
 

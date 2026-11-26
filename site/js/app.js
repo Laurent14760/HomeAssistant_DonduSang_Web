@@ -125,6 +125,29 @@
     host.replaceChildren(...nodes.flat().filter(Boolean));
   }
   const safeUrl = (u) => (typeof u === "string" && /^https:\/\//i.test(u) ? u : null);
+
+  // Prise de rendez-vous : lien direct de la collecte quand son planning est ouvert ;
+  // sinon, page de réservation du site de l'EFS (recherche de collecte, filtrée sur le sang total).
+  const EFS_RDV = "https://dondesang.efs.sante.fr/trouver-une-collecte";
+  function rendezVous(c) {
+    const direct = c.statut === C.STATUT.OUVERT ? safeUrl(c.lienRdv) : null;
+    if (direct) return { url: direct, note: null };
+    const url = state.don === "sang" ? `${EFS_RDV}?type_don=S` : EFS_RDV;
+    const note = c.statut === C.STATUT.COMPLET
+      ? "Collecte complète : le site de l’EFS propose les autres créneaux et lieux disponibles."
+      : c.statut === C.STATUT.NON_OUVERT
+        ? "Planning pas encore ouvert : la réservation se fera sur le site de l’EFS dès son ouverture."
+        : "Lien direct indisponible : réservation sur le site de l’EFS.";
+    return { url, note };
+  }
+  function boutonRdv(c, extraCls = "") {
+    const r = rendezVous(c);
+    return {
+      bouton: h("a", { class: `btn primary block ${extraCls}`.trim(), href: r.url, target: "_blank", rel: "noopener",
+        title: "Ouvre le site de l’Établissement français du sang pour réserver un créneau" }, "Prendre rendez-vous"),
+      note: r.note ? h("p", { class: "rdv-note" }, r.note) : null,
+    };
+  }
   const nf = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
   const km = (v) => `${nf.format(v)} km`;
   const pct = (v) => `${Math.round(v)} %`;
@@ -492,7 +515,7 @@
         `Aucune collecte à venir à ${titreCommune(voulue)}${state.rdvOnly ? " avec rendez-vous possible" : ""} : la prochaine collecte est affichée.`))
       : null;
     const open = c.placesRestantes !== null;
-    const rdv = c.statut === C.STATUT.OUVERT ? safeUrl(c.lienRdv) : null;
+    const rdv = boutonRdv(c);
     const others = list.length - 1;
 
     const card = h("article", { class: "card v1", "aria-label": "Prochaine collecte" },
@@ -525,10 +548,9 @@
           h("span", { style: { color: "var(--text-2)" } }, "Les rendez-vous ne sont pas encore ouverts pour cette collecte."),
           statusChip(c)),
       h("div", { class: "btns" },
-        rdv
-          ? h("a", { class: "btn primary block", href: rdv, target: "_blank", rel: "noopener" }, "Prendre rendez-vous")
-          : h("a", { class: "btn secondary block", href: "https://dondesang.efs.sante.fr", target: "_blank", rel: "noopener" }, "Site de l’EFS"),
+        rdv.bouton,
         h("a", { class: "btn secondary", href: directionsUrl(c), target: "_blank", rel: "noopener" }, "Itinéraire")),
+      rdv.note,
       h("div", { class: "row muted", style: { fontSize: "12px", borderTop: "1px solid var(--line)", paddingTop: "12px" } },
         h("span", null, state.demo ? "Données de démonstration" : `Mis à jour à ${fTime.format(state.fetchedAt)}`),
         h("span", null, others > 0 ? `${others} autre${others > 1 ? "s" : ""} collecte${others > 1 ? "s" : ""} ${communeSeule() ? "dans la commune" : `dans ${state.radius} km`}` : "Seule collecte de la période")),
@@ -879,7 +901,7 @@
         reglages()));
     } else {
       const ouvert = c.placesRestantes !== null;
-      const rdv = c.statut === C.STATUT.OUVERT ? safeUrl(c.lienRdv) : null;
+      const rdv = boutonRdv(c);
       const carte = h("article", { class: "card tab-carte", "aria-label": "Prochaine collecte" },
         h("div", { class: "row" },
           h("div", { class: "kicker" }, `${auLieu ? "Prochaine collecte ici" : "Prochaine collecte"} · ${relDay(daysUntil(c))}`),
@@ -894,8 +916,9 @@
               h("span", { style: { width: `${Math.min(100, c.taux)}%` } })) : null)
           : h("div", { class: "tab-heures" }, "Les rendez-vous ne sont pas encore ouverts."),
         h("div", { class: "btns" },
-          rdv ? h("a", { class: "btn primary block", href: rdv, target: "_blank", rel: "noopener" }, "Prendre rendez-vous") : null,
-          h("a", { class: "btn secondary", href: directionsUrl(c), target: "_blank", rel: "noopener" }, "Itinéraire")));
+          rdv.bouton,
+          h("a", { class: "btn secondary", href: directionsUrl(c), target: "_blank", rel: "noopener" }, "Itinéraire")),
+        rdv.note);
       const suite = list.filter((x) => x !== c && x.fin > now).slice(0, 5);
       const suiteCarte = h("article", { class: "card tab-suite", "aria-label": "Collectes suivantes" },
         h("h3", null, auLieu ? "Autres collectes du secteur" : "Collectes suivantes"),
@@ -1056,6 +1079,7 @@
     $("tablette-btn").addEventListener("click", () => enterTablette(Tab.read()));
     $("tab-quitter").addEventListener("click", exitTablette);
     $("tab-reglages").addEventListener("click", openReglages);
+    $("top-reglages").addEventListener("click", openReglages);
     $("reg-form").addEventListener("submit", saveReglages);
     $("reg-annuler").addEventListener("click", () => $("reglages").close());
     $("reg-oublier").addEventListener("click", forgetReglages);

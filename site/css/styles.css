@@ -183,6 +183,9 @@ footer p{margin:0 0 6px}
 .notice.inline{margin:0 0 12px}
 
 /* v3.0 : champs invalides, mode tablette, fenêtre de réglages */
+header{position:relative}
+.top-actions{display:flex;justify-content:flex-end;gap:10px;padding-top:16px;margin-bottom:8px}
+.rdv-note{font-size:13px;color:var(--muted);margin:-6px 0 0}
 input[aria-invalid="true"]{border-color:var(--accent)}
 
 body.mode-tablette > header, body.mode-tablette > main, body.mode-tablette > footer{display:none}

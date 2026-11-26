@@ -14,7 +14,7 @@ Code postal, rayon d’action (0 à 50 km), nombre de jours (1 à 180) et type d
 
 ### Mode tablette
 
-Affichage lisible de loin pour une tablette murale ou un écran d’accueil : la prochaine collecte du **lieu de collecte choisi** (date, horaires, places restantes, rendez-vous), les autres collectes du secteur, l’heure et la date de mise à jour. Les données se rafraîchissent seules toutes les heures.
+Le bouton **Mode tablette**, en haut à droite à côté de **⚙ Réglages**, bascule la page en affichage lisible de loin pour une tablette murale ou un écran d’accueil ; **Page complète** la ramène à l’affichage normal. On y voit la prochaine collecte du **lieu de collecte choisi** (date, horaires, places restantes, bouton **Prendre rendez-vous**), les autres collectes du secteur, l’heure et la date de mise à jour. Les données se rafraîchissent seules toutes les heures.
 
 ![Mode tablette en paysage : prochaine collecte à la Salle polyvalente de Bretteville-sur-Odon](images/tablette-paysage.png)
 
@@ -31,7 +31,8 @@ En portrait et en thème sombre (suivi automatique du thème de l’appareil) :
 - Recherche par code postal (choix de la commune si plusieurs) ou par géolocalisation, rayon de 0 à 50 km : **0 = uniquement les collectes de la commune du code postal**.
 - Nombre de jours de 1 à 180 (défaut 30) ; une valeur hors bornes est signalée, jamais remplacée sans le dire.
 - Type de don (sang, plasma, plaquettes), collectes professionnelles, filtre « rendez-vous ouverts ».
-- **Mode tablette** : lieu de collecte choisi, réglages par bouton, conservés dans un cookie ; adresse dédiée `?mode=tablette`.
+- **Mode tablette** : bascule en un clic (« Mode tablette » / « Page complète »), lieu de collecte choisi, réglages par bouton, conservés dans un cookie ; adresse dédiée `?mode=tablette`.
+- **Prendre rendez-vous** sur la prochaine collecte : lien direct quand le planning est ouvert, sinon page de réservation du site de l’EFS (planning non ouvert, collecte complète).
 - Lieu de base mémorisé à la demande (cookie `efs_lieu_base`) ; recherche conservée dans l’adresse (lien partageable).
 - Mode démonstration hors ligne, thème clair et sombre, affichage mobile.
 
