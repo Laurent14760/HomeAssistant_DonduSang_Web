@@ -12,12 +12,15 @@ Options -Indexes
   </FilesMatch>
 </IfModule>
 
-# Redirection HTTP → HTTPS (facultative). À activer seulement si le panneau de l'hébergeur
-# ne le fait pas déjà (cPanel : Domaines → « Forcer la redirection HTTPS ») : les deux
-# ensemble ne posent pas de problème, mais un seul suffit.
-# <IfModule mod_rewrite.c>
-#   RewriteEngine On
-#   RewriteCond %{HTTPS} !=on
-#   RewriteCond %{HTTP:X-Forwarded-Proto} !=https
-#   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-# </IfModule>
+# Redirection HTTP → HTTPS.
+# Active par défaut : quand la page est dans un sous-dossier du site principal (ex. public_html/dondusang
+# servi par un sous-domaine), la redirection du .htaccess parent ajoute le nom du dossier à l'adresse
+# (https://dondusang.mondomaine.fr/dondusang/ → 404). Déclarer ici le moteur de réécriture remplace les
+# règles du parent pour ce dossier, et %{REQUEST_URI} garde l'adresse exacte.
+# Sur un serveur sans HTTPS, mettre ces lignes en commentaire.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</IfModule>
