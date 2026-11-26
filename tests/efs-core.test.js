@@ -83,3 +83,14 @@ test("liens de rendez-vous sans schéma", () => {
   assert.equal(core.normalizeUrl("javascript:alert(1)"), null);
   assert.equal(core.normalizeUrl(""), null);
 });
+
+test("rayon 0 : uniquement la commune de départ", () => {
+  const r = parse({ radiusKm: core.COMMUNE_SEARCH_RADIUS });
+  const seule = core.filterCommune(r, "Bretteville-sur-Odon");
+  assert.ok(seule.collectes.length > 0 && seule.collectes.length < r.collectes.length);
+  assert.ok(seule.collectes.every((c) => c.commune === "Bretteville-sur-Odon"));
+  assert.ok(core.memeCommune("BRETTEVILLE SUR ODON", "Bretteville-sur-Odon"));
+  assert.ok(core.memeCommune("14000 Caen", "Caen"));
+  assert.equal(core.memeCommune("Bretteville-l'Orgueilleuse", "Bretteville-sur-Odon"), false);
+  assert.equal(core.memeCommune(null, "Caen"), false);
+});

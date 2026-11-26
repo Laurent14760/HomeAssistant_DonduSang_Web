@@ -2,35 +2,64 @@
 
 Page web autonome qui affiche les prochaines collectes de l’Établissement français du sang autour d’un code postal ou de votre position : prochaine collecte, agenda, carte et remplissage des créneaux. Elle interroge directement les API publiques (API Carto v3 de l’EFS, API Géo de l’État) ; aucune base de données, aucun lien avec Home Assistant.
 
-Version 2.2 · compagnon de l’intégration [HomeAssistant_DonduSang](https://github.com/Laurent14760/HomeAssistant_DonduSang).
+Version 3.0 · compagnon de l’intégration [HomeAssistant_DonduSang](https://github.com/Laurent14760/HomeAssistant_DonduSang) (mêmes règles : rayon 0 = commune seule, 1 à 180 jours).
 
-## Démarrage rapide (Docker)
+## Présentation visuelle
+
+### Page de recherche
+
+Code postal, rayon d’action (0 à 50 km), nombre de jours (1 à 180) et type de don ; les trois visuels se mettent à jour : prochaine collecte et indicateurs, agenda, carte et remplissage.
+
+![Page de recherche : formulaire, prochaine collecte et indicateurs](images/page-recherche.png)
+
+### Mode tablette
+
+Affichage lisible de loin pour une tablette murale ou un écran d’accueil : la prochaine collecte du **lieu de collecte choisi** (date, horaires, places restantes, rendez-vous), les autres collectes du secteur, l’heure et la date de mise à jour. Les données se rafraîchissent seules toutes les heures.
+
+![Mode tablette en paysage : prochaine collecte à la Salle polyvalente de Bretteville-sur-Odon](images/tablette-paysage.png)
+
+Le bouton **⚙ Réglages** ouvre une fenêtre simple pour changer le **lieu initial** (code postal, commune), le **rayon**, le **nombre de jours**, le type de don et le **lieu de collecte affiché**. La liste des lieux se met à jour à chaque changement. **Enregistrer** conserve ces réglages dans un cookie de la tablette (`efs_tablette`, un an) : elle rouvre la page directement en mode tablette, sur ce lieu.
+
+![Fenêtre de réglages de la tablette](images/tablette-reglages.png)
+
+En portrait et en thème sombre (suivi automatique du thème de l’appareil) :
+
+<img src="images/tablette-portrait-sombre.png" alt="Mode tablette en portrait, thème sombre" width="400">
+
+## Fonctionnalités
+
+- Recherche par code postal (choix de la commune si plusieurs) ou par géolocalisation, rayon de 0 à 50 km : **0 = uniquement les collectes de la commune du code postal**.
+- Nombre de jours de 1 à 180 (défaut 30) ; une valeur hors bornes est signalée, jamais remplacée sans le dire.
+- Type de don (sang, plasma, plaquettes), collectes professionnelles, filtre « rendez-vous ouverts ».
+- **Mode tablette** : lieu de collecte choisi, réglages par bouton, conservés dans un cookie ; adresse dédiée `?mode=tablette`.
+- Lieu de base mémorisé à la demande (cookie `efs_lieu_base`) ; recherche conservée dans l’adresse (lien partageable).
+- Mode démonstration hors ligne, thème clair et sombre, affichage mobile.
+
+## Déploiement
+
+| Où publier la page | Fichiers à déposer | Relais des API | Guide |
+|---|---|---|---|
+| Petit hébergement web mutualisé (Apache + PHP : OVH, o2switch, Ionos, Hostinger…) | contenu de `site/` | `site/api/proxy.php` | [MODE_OPERATOIRE.md, option D](MODE_OPERATOIRE.md#option-d--petit-site-web-sur-un-hébergement-mutualisé-apache--php) |
+| VPS, NAS ou serveur avec Docker | dépôt complet | nginx (`nginx.conf`) | [option B](MODE_OPERATOIRE.md#option-b--docker-recommandée) |
+| Dossier `www` de Home Assistant | contenu de `site/` | aucun | [option A](MODE_OPERATOIRE.md#option-a--héberger-dans-home-assistant-sans-proxy) |
+
+Le relais est nécessaire parce que l’API de l’EFS peut refuser les appels directs d’un navigateur (règle CORS). Démarrage rapide avec Docker :
 
 ```bash
 git clone https://github.com/Laurent14760/HomeAssistant_DonduSang_Web.git
 cd HomeAssistant_DonduSang_Web
-docker compose up -d
+docker compose up -d        # puis http://<ip-du-serveur>:8080
 ```
-
-Puis ouvrir `http://<ip-du-serveur>:8080`. Le conteneur nginx sert la page et relaie les appels aux API (indispensable pour l’API de l’EFS, qui peut refuser les appels directs du navigateur).
-
-Autres hébergements (dossier `www` de Home Assistant, serveur local) et vérifications : voir [MODE_OPERATOIRE.md](MODE_OPERATOIRE.md).
-
-## Fonctionnalités
-
-- Recherche par code postal (choix de la commune si plusieurs) ou par géolocalisation, rayon de 1 à 50 km.
-- Type de don (sang, plasma, plaquettes), horizon, collectes professionnelles, filtre « rendez-vous ouverts ».
-- Lieu de base mémorisé à la demande dans un cookie (`efs_lieu_base`, un an ou session).
-- Choix de la collecte présentée par commune ; recherche conservée dans l’adresse (lien partageable).
-- Mode démonstration hors ligne, thème clair et sombre, affichage mobile.
 
 ## Contenu
 
 | Chemin | Rôle |
 |---|---|
 | `site/` | La page (HTML, CSS, JavaScript sans dépendance) |
-| `nginx.conf`, `docker-compose.yml`, `Dockerfile` | Hébergement et proxy des API |
+| `site/api/proxy.php`, `site/api/.htaccess`, `site/.htaccess` | Relais des API et en-têtes de sécurité pour un hébergement Apache + PHP |
+| `nginx.conf`, `docker-compose.yml`, `Dockerfile` | Hébergement Docker et proxy des API |
+| `images/` | Captures d’écran de ce document |
 | `tests/` | Tests de la logique métier : `node --test tests/efs-core.test.js` |
-| `MODE_OPERATOIRE.md` | Installation, exploitation, dépannage |
+| `MODE_OPERATOIRE.md` | Installation, mode tablette, exploitation, dépannage |
 
 Page indépendante, non affiliée à l’EFS.

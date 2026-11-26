@@ -277,6 +277,34 @@
     return result;
   }
 
+  // Rayon 0 = « uniquement la commune de départ » (même règle que l'intégration 1.4.1) :
+  // l'API est interrogée dans ce rayon, puis seules les collectes de la commune sont gardées.
+  // Un rayon géométrique nul ne trouverait rien : les lieux ne sont jamais au centre exact.
+  const COMMUNE_SEARCH_RADIUS = 10;
+
+  /** Clé de comparaison d'un nom de commune (casse, accents, ponctuation ignorés). */
+  function cleNom(text) {
+    return normalize(text).replace(/[^a-z0-9]+/g, " ").trim();
+  }
+
+  /** « BRETTEVILLE SUR ODON » = « Bretteville-sur-Odon » ; « 14000 Caen » = « Caen ». */
+  function memeCommune(nomLieu, nomCommune) {
+    const lieu = cleNom(nomLieu), cible = cleNom(nomCommune);
+    if (!lieu || !cible) return false;
+    if (lieu === cible) return true;
+    const mots = lieu.split(" ");
+    return /^\d+$/.test(mots[0]) && mots.slice(1).join(" ") === cible;
+  }
+
+  /** Ne garde que les collectes (et maisons du don) de la commune de départ. */
+  function filterCommune(result, nomCommune) {
+    return {
+      ...result,
+      collectes: result.collectes.filter((c) => memeCommune(c.commune, nomCommune)),
+      maisons: result.maisons.filter((m) => memeCommune(m.commune, nomCommune)),
+    };
+  }
+
   function nextCollecte(collectes, now) {
     return collectes.find((c) => c.fin > now) || null;
   }
@@ -294,5 +322,6 @@
   return {
     TZ, DON_FIELDS, STATUT, radiusToDiameters, haversineKm, postcodeIsCoherent,
     parseTime, parseDate, isProfessional, normalizeUrl, parisDate, parseCollections, nextCollecte, efsQuery,
+    COMMUNE_SEARCH_RADIUS, cleNom, memeCommune, filterCommune,
   };
 });

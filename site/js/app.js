@@ -18,11 +18,36 @@
 
   const state = {
     cp: "", insee: null, communes: [], cpLoaded: null,
-    center: null, radius: 10, don: "sang", horizon: 60, pro: false,
+    center: null, radius: 10, don: "sang", horizon: 30, pro: false,
     demo: false, raw: null, result: null, fetchedAt: null, error: null,
     showAll: false, busy: false, timer: null,
     rdvOnly: false, communeVue: "auto", base: null,
+    mode: "normal", tabLieu: "auto", tabLieuNom: "", tabCfg: null, tabTimer: null, tabPremier: false,
   };
+
+  // Bornes communes avec l'intégration Home Assistant (1.4.1) et la carte Lovelace (1.3.1).
+  const BORNES = { rayon: [0, 50], jours: [1, 180] };
+  const JOURS_DEFAUT = 30;
+  /** Entier dans les bornes, sinon null (valeur vide, décimale ou hors bornes). */
+  function entierBorne(v, [min, max]) {
+    if (v === null || v === undefined || String(v).trim() === "") return null;
+    const n = Number(v);
+    return Number.isInteger(n) && n >= min && n <= max ? n : null;
+  }
+
+  // ------------------------------------------------------------ rayon 0 = commune seule
+  const communeSeule = () => state.radius === 0;
+  /** Rayon réellement interrogé : rayon 0 → recherche autour de la commune, puis filtre sur son nom. */
+  const rayonRecherche = () => (communeSeule() ? C.COMMUNE_SEARCH_RADIUS : state.radius);
+  /** Libellé du périmètre : « rayon 10 km » ou « Bretteville-sur-Odon seulement ». */
+  function perimetre() {
+    return communeSeule() ? `${state.center ? state.center.label : "commune"} seulement` : `rayon ${state.radius} km`;
+  }
+  /** Rayon du plan : celui de la recherche, ou cadré sur le lieu le plus éloigné en mode commune. */
+  function rayonCarte(collectes) {
+    if (!communeSeule()) return state.radius;
+    return Math.max(2, Math.ceil(Math.max(0, ...collectes.map((c) => c.distance || 0))));
+  }
 
   // ---------------------------------------------------------- lieu de base (cookie)
   // Cookie fonctionnel déposé uniquement à la demande de l'utilisateur ; lu par ce seul navigateur.
@@ -190,13 +215,19 @@
   }
 
   // -------------------------------------------------------------- orchestration
+  /** Lit le formulaire ; faux si le nombre de jours est hors bornes (signalé sous le champ). */
   function readForm() {
     state.cp = $("cp").value.trim();
     state.radius = +$("rayon").value;
     state.don = $("don").value;
-    state.horizon = +$("horizon").value;
     state.pro = $("pro").checked;
     state.rdvOnly = $("rdv").checked;
+    const j = entierBorne($("horizon").value, BORNES.jours);
+    $("horizon").setAttribute("aria-invalid", String(j === null));
+    $("horizon-err").textContent = j === null ? "Nombre de jours : un entier de 1 à 180." : "";
+    if (j === null) return false;
+    state.horizon = j;
+    return true;
   }
 
   function setBusy(b) {
@@ -210,7 +241,7 @@
       ev.preventDefault();
       if (state.demo) { state.demo = false; state.cpLoaded = null; $("notice").replaceChildren(); }
     }
-    readForm();
+    if (!readForm()) { $("horizon").focus(); return; }
     $("cp-err").textContent = "";
     if (!/^\d{5}$/.test(state.cp)) {
       $("cp-err").textContent = "Saisissez un code postal à 5 chiffres.";
@@ -255,11 +286,17 @@
 
   async function loadCollectes({ silent = false } = {}) {
     if (!state.center) return;
+    if (communeSeule() && !state.center.cp) {
+      // « Ma position » n'a pas de commune de référence : le rayon 0 n'a pas de sens.
+      $("notice").replaceChildren(h("div", { class: "notice error", role: "alert" },
+        h("p", null, "Le rayon 0 (uniquement la commune de départ) nécessite un code postal. Choisissez un rayon d’au moins 1 km ou saisissez un code postal.")));
+      return;
+    }
     if (!silent) showLoading();
     try {
       state.raw = state.demo
         ? demoPayload()
-        : await fetchJson("efs", C.efsQuery(state.center.lat, state.center.lon, state.radius, 100));
+        : await fetchJson("efs", C.efsQuery(state.center.lat, state.center.lon, rayonRecherche(), 100));
       state.fetchedAt = new Date();
       state.error = null;
       $("notice").replaceChildren();
@@ -274,10 +311,11 @@
 
   function reparse() {
     if (!state.raw || !state.center) return;
-    state.result = C.parseCollections(state.raw, {
-      centerLat: state.center.lat, centerLon: state.center.lon, radiusKm: state.radius,
+    const r = C.parseCollections(state.raw, {
+      centerLat: state.center.lat, centerLon: state.center.lon, radiusKm: rayonRecherche(),
       donType: state.don, includePro: state.pro, horizonDays: state.horizon, now: new Date(),
     });
+    state.result = communeSeule() ? C.filterCommune(r, state.center.label) : r;
     renderAll();
   }
 
@@ -287,6 +325,11 @@
   }
 
   function syncUrl() {
+    if (state.mode === "tablette") {
+      // En mode tablette, les réglages viennent du cookie : l'adresse reste courte (favori de la tablette).
+      history.replaceState(null, "", `${location.pathname}?mode=tablette`);
+      return;
+    }
     const p = new URLSearchParams();
     if (state.demo) p.set("demo", "1");
     if (state.cp) p.set("cp", state.cp);
@@ -297,7 +340,7 @@
     }
     p.set("r", state.radius);
     if (state.don !== "sang") p.set("don", state.don);
-    if (state.horizon !== 60) p.set("h", state.horizon);
+    if (state.horizon !== JOURS_DEFAUT) p.set("h", state.horizon);
     if (state.pro) p.set("pro", "1");
     if (state.rdvOnly) p.set("rdv", "1");
     if (state.communeVue !== "auto") p.set("vc", state.communeVue);
@@ -327,6 +370,7 @@
       ),
     );
     renderStatus();
+    renderTablette();
   }
 
   function renderStatus() {
@@ -337,7 +381,7 @@
     const parts = [
       state.demo ? "Mode démonstration (réponses enregistrées)" : `Données EFS de ${fTime.format(state.fetchedAt)}`,
       `${state.center.label}${state.center.cp && state.center.label !== "Ma position" ? ` (${state.center.cp})` : ""}${isBase(state.center) ? " – lieu de base" : ""}`,
-      `rayon ${state.radius} km`,
+      perimetre(),
       `${visibles().length} collecte${visibles().length > 1 ? "s" : ""}${state.rdvOnly ? " avec rendez-vous possible" : ""}`,
     ];
     if (r.rejets.length) parts.push(`${r.rejets.length} lieu${r.rejets.length > 1 ? "x" : ""} écarté${r.rejets.length > 1 ? "s" : ""} (hors rayon ou incohérent)`);
@@ -391,6 +435,7 @@
   }
 
   function renderAll() {
+    if (state.mode === "tablette") renderTablette();
     renderStatus();
     renderBase();
     fillVueCommune();
@@ -404,8 +449,10 @@
   }
   function emptyCard() {
     return h("div", { class: "card empty" },
-      `Aucune collecte dans les ${state.horizon} prochains jours à moins de ${state.radius} km. `,
-      "Élargissez le rayon ou l’horizon.");
+      communeSeule()
+        ? `Aucune collecte à ${state.center ? state.center.label : "cette commune"} dans les ${state.horizon} prochains jours. `
+        : `Aucune collecte dans les ${state.horizon} prochains jours à moins de ${state.radius} km. `,
+      communeSeule() ? "Augmentez le nombre de jours ou choisissez un rayon." : "Élargissez le rayon ou le nombre de jours.");
   }
 
   function statusChip(c) {
@@ -484,7 +531,7 @@
         h("a", { class: "btn secondary", href: directionsUrl(c), target: "_blank", rel: "noopener" }, "Itinéraire")),
       h("div", { class: "row muted", style: { fontSize: "12px", borderTop: "1px solid var(--line)", paddingTop: "12px" } },
         h("span", null, state.demo ? "Données de démonstration" : `Mis à jour à ${fTime.format(state.fetchedAt)}`),
-        h("span", null, others > 0 ? `${others} autre${others > 1 ? "s" : ""} collecte${others > 1 ? "s" : ""} dans ${state.radius} km` : "Seule collecte de l’horizon")),
+        h("span", null, others > 0 ? `${others} autre${others > 1 ? "s" : ""} collecte${others > 1 ? "s" : ""} ${communeSeule() ? "dans la commune" : `dans ${state.radius} km`}` : "Seule collecte de la période")),
     );
 
     const ouverts = list.filter((x) => x.placesRestantes !== null && x.placesRestantes > 0);
@@ -535,7 +582,7 @@
     mount("v2", h("article", { class: "card", "aria-label": "Agenda des collectes" },
       h("div", { class: "row", style: { alignItems: "baseline", paddingBottom: "6px" } },
         h("strong", { style: { fontSize: "19px" } }, "Collectes à venir"),
-        h("span", { class: "muted", style: { fontSize: "13px" } }, `${list.length} · rayon ${state.radius} km · ${state.horizon} jours`)),
+        h("span", { class: "muted", style: { fontSize: "13px" } }, `${list.length} · ${perimetre()} · ${state.horizon} jours`)),
       h("ul", { class: "agenda" }, items),
       more));
   }
@@ -587,14 +634,15 @@
   function buildMap(r) {
     const W = 512, H = 480, CX = 256, CY = 240, RPX = 200;
     const o = state.center;
-    const scale = RPX / state.radius;
+    const R = rayonCarte(r.collectes);
+    const scale = RPX / R;
     const cosLat = Math.cos((o.lat * Math.PI) / 180);
     const proj = (lat, lon) => [CX + (lon - o.lon) * 111 * cosLat * scale, CY - (lat - o.lat) * 111 * scale];
 
     // Grille kilométrique
-    const step = [1, 2, 5, 10, 20, 25, 50].find((v) => state.radius / v <= 3) || 50;
+    const step = [1, 2, 5, 10, 20, 25, 50].find((v) => R / v <= 3) || 50;
     const grid = [];
-    for (let k = -Math.floor(state.radius / step) * step; k <= state.radius; k += step) {
+    for (let k = -Math.floor(R / step) * step; k <= R; k += step) {
       const p = CX + k * scale, q = CY + k * scale;
       grid.push(s("line", { class: "map-grid", x1: p, y1: 0, x2: p, y2: H }), s("line", { class: "map-grid", x1: 0, y1: q, x2: W, y2: q }));
     }
@@ -630,11 +678,11 @@
         s("rect", { x: (x - 7).toFixed(1), y: (y - 7).toFixed(1), width: 14, height: 14, rx: 3, class: "mk-maison" }));
     });
 
-    const svg = s("svg", { class: "map", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Carte des lieux de collecte dans un rayon de ${state.radius} km autour de ${o.label}`, style: { borderRadius: "12px" } },
+    const svg = s("svg", { class: "map", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": communeSeule() ? `Carte des lieux de collecte de ${o.label}` : `Carte des lieux de collecte dans un rayon de ${R} km autour de ${o.label}`, style: { borderRadius: "12px" } },
       s("rect", { class: "map-bg", x: 0, y: 0, width: W, height: H }),
       grid,
       s("circle", { class: "map-circle", cx: CX, cy: CY, r: RPX }),
-      s("text", { class: "map-small", x: CX, y: CY - RPX - 8, "text-anchor": "middle" }, `${state.radius} km`),
+      s("text", { class: "map-small", x: CX, y: CY - RPX - 8, "text-anchor": "middle" }, `${R} km`),
       s("text", { class: "map-small", x: 12, y: H - 12 }, `Quadrillage : ${step} km`),
       s("circle", { class: "map-home", cx: CX, cy: CY, r: 9 }),
       s("path", { class: "map-home-roof", d: `M${CX - 5} ${CY + 2} L${CX} ${CY - 4} L${CX + 5} ${CY + 2} V${CY + 6} H${CX - 5} Z` }),
@@ -644,7 +692,7 @@
       shape === "rect" ? s("rect", { x: 1, y: 1, width: 10, height: 10, rx: 2, class: cls }) : s("circle", { cx: 6, cy: 6, r: 4.5, class: cls }));
     return h("article", { class: "card", "aria-label": "Carte des collectes" },
       h("div", { class: "row", style: { alignItems: "baseline", marginBottom: "12px" } },
-        h("strong", { style: { fontSize: "17px" } }, `Collectes dans un rayon de ${state.radius} km`),
+        h("strong", { style: { fontSize: "17px" } }, communeSeule() ? `Collectes à ${o.label}` : `Collectes dans un rayon de ${state.radius} km`),
         h("span", { class: "muted", style: { fontSize: "13px" } }, `${byPlace.size} lieu${byPlace.size > 1 ? "x" : ""}`)),
       svg,
       h("div", { class: "legend" },
@@ -723,6 +771,303 @@
     await onSubmit();
   }
 
+  // ================================================================ mode tablette
+  // Affichage compact et lisible de loin d'un lieu de collecte choisi. Les réglages (lieu initial,
+  // rayon, nombre de jours, type de don, lieu affiché) sont conservés dans un cookie fonctionnel,
+  // déposé uniquement quand l'utilisateur clique sur « Enregistrer ».
+  const TAB_COOKIE = "efs_tablette";
+  const Tab = {
+    read() {
+      try {
+        const m = document.cookie.split("; ").find((c) => c.startsWith(TAB_COOKIE + "="));
+        if (!m) return null;
+        const t = JSON.parse(decodeURIComponent(m.slice(TAB_COOKIE.length + 1)));
+        const ok = /^\d{5}$/.test(t?.cp || "") && Number.isFinite(t?.lat) && Number.isFinite(t?.lon)
+          && entierBorne(t.r, BORNES.rayon) !== null && entierBorne(t.j, BORNES.jours) !== null
+          && t.don in C.DON_FIELDS && typeof t.nom === "string";
+        return ok ? t : null;
+      } catch {
+        return null;
+      }
+    },
+    write(t) {
+      const secure = location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = `${TAB_COOKIE}=${encodeURIComponent(JSON.stringify(t))}; Path=/; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`;
+      return Tab.read() !== null; // faux si le navigateur refuse les cookies
+    },
+    clear() {
+      document.cookie = `${TAB_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+    },
+  };
+
+  /** Clé d'un lieu de collecte (un même lieu revient à plusieurs dates). */
+  const cleLieu = (c) => `${cle(c.lieu)}|${cle(c.commune)}`;
+  const nomLieu = (c) => [c.lieu, titreCommune(c.commune)].filter(Boolean).join(" · ");
+
+  function enterTablette(cfg) {
+    state.mode = "tablette";
+    state.demo = false;
+    state.tabCfg = cfg || null;
+    state.tabPremier = !cfg; // premier usage : la fenêtre de réglages s'ouvre après la recherche
+    document.body.classList.add("mode-tablette");
+    $("tablette").hidden = false;
+    // Le mode tablette affiche toutes les collectes du type choisi, hors collectes professionnelles.
+    $("pro").checked = false;
+    $("rdv").checked = false;
+    if (cfg) {
+      state.tabLieu = cfg.lieu || "auto";
+      state.tabLieuNom = cfg.lieuNom || "";
+      $("cp").value = cfg.cp;
+      state.insee = cfg.insee || null;
+      $("rayon").value = cfg.r;
+      $("rayon").dispatchEvent(new Event("input"));
+      $("horizon").value = cfg.j;
+      $("don").value = cfg.don;
+    }
+    state.cpLoaded = null;
+    clearInterval(state.tabTimer);
+    // Horloge et « dans N jours » tenus à jour ; les données, elles, sont relues toutes les heures.
+    const tick = () => {
+      $("tab-horloge").textContent = fTime.format(new Date());
+      if (state.result && new Date().getMinutes() % 5 === 0) renderTablette();
+    };
+    tick();
+    state.tabTimer = setInterval(tick, 60000);
+    renderTablette();
+    onSubmit();
+  }
+
+  function exitTablette() {
+    state.mode = "normal";
+    clearInterval(state.tabTimer);
+    document.body.classList.remove("mode-tablette");
+    $("tablette").hidden = true;
+    syncUrl();
+    if (state.result) renderAll();
+    window.scrollTo(0, 0);
+  }
+
+  function renderTablette() {
+    if (state.mode !== "tablette") return;
+    const lieuChoisi = state.tabLieu !== "auto";
+    $("tab-titre").textContent = `Don du sang · ${lieuChoisi && state.tabLieuNom ? state.tabLieuNom : state.center ? state.center.label : "…"}`;
+    const reglages = () => h("button", { class: "btn primary", type: "button", onclick: openReglages }, "⚙ Ouvrir les réglages");
+
+    if (!state.result) {
+      mount("tab-main", state.error
+        ? h("div", { class: "card empty tab-alerte" }, h("p", null, state.error.message || "Erreur inattendue."),
+          h("button", { class: "btn secondary", type: "button", onclick: () => onSubmit() }, "Réessayer"))
+        : h("div", { class: "skeleton tab-alerte" }));
+      $("tab-pied").replaceChildren();
+      return;
+    }
+    const list = visibles();
+    const now = new Date();
+    const auLieu = lieuChoisi ? list.find((x) => x.fin > now && cleLieu(x) === state.tabLieu) : null;
+    const c = auLieu || C.nextCollecte(list, now);
+    const alerte = lieuChoisi && !auLieu
+      ? h("div", { class: "notice tab-alerte" }, h("p", null,
+        `Aucune collecte prévue à ${state.tabLieuNom || "ce lieu"} dans les ${state.horizon} prochains jours`,
+        c ? " : prochaine collecte du secteur affichée." : "."))
+      : null;
+
+    if (!c) {
+      mount("tab-main", alerte, h("div", { class: "card empty tab-alerte" },
+        h("p", null, communeSeule()
+          ? `Aucune collecte à ${state.center.label} dans les ${state.horizon} prochains jours.`
+          : `Aucune collecte dans les ${state.horizon} prochains jours à moins de ${state.radius} km.`),
+        reglages()));
+    } else {
+      const ouvert = c.placesRestantes !== null;
+      const rdv = c.statut === C.STATUT.OUVERT ? safeUrl(c.lienRdv) : null;
+      const carte = h("article", { class: "card tab-carte", "aria-label": "Prochaine collecte" },
+        h("div", { class: "row" },
+          h("div", { class: "kicker" }, `${auLieu ? "Prochaine collecte ici" : "Prochaine collecte"} · ${relDay(daysUntil(c))}`),
+          statusChip(c)),
+        h("div", null, h("div", { class: "tab-date" }, cap(fDateLong.format(c.debut))), h("div", { class: "tab-heures" }, c.horaires)),
+        h("div", { class: "tab-lieu" }, nomLieu(c), h("small", null, [c.adresse, km(c.distance)].filter(Boolean).join(" · "))),
+        ouvert
+          ? h("div", null,
+            h("div", { class: "tab-places" }, h("span", { class: "n" }, c.placesRestantes),
+              h("span", { class: "t" }, c.placesTotales ? `places restantes sur ${c.placesTotales}` : "places restantes")),
+            c.taux !== null ? h("div", { class: "bar", style: { marginTop: "12px" }, role: "img", "aria-label": `${pct(c.taux)} des places réservées` },
+              h("span", { style: { width: `${Math.min(100, c.taux)}%` } })) : null)
+          : h("div", { class: "tab-heures" }, "Les rendez-vous ne sont pas encore ouverts."),
+        h("div", { class: "btns" },
+          rdv ? h("a", { class: "btn primary block", href: rdv, target: "_blank", rel: "noopener" }, "Prendre rendez-vous") : null,
+          h("a", { class: "btn secondary", href: directionsUrl(c), target: "_blank", rel: "noopener" }, "Itinéraire")));
+      const suite = list.filter((x) => x !== c && x.fin > now).slice(0, 5);
+      const suiteCarte = h("article", { class: "card tab-suite", "aria-label": "Collectes suivantes" },
+        h("h3", null, auLieu ? "Autres collectes du secteur" : "Collectes suivantes"),
+        suite.length
+          ? h("ul", null, suite.map((x) => h("li", null,
+            h("div", { class: "d" }, h("small", null, fWd.format(x.debut)), h("strong", null, fDay.format(x.debut)), h("small", null, fMon.format(x.debut))),
+            h("div", { class: "who" }, h("b", null, titreCommune(x.commune || x.lieu)), h("span", null, `${x.lieu} · ${x.horaires}`)),
+            h("div", { class: "pl" }, x.placesRestantes === null ? "—" : x.placesTotales ? `${x.placesRestantes}/${x.placesTotales}` : x.placesRestantes))))
+          : h("p", { class: "muted" }, "Aucune autre collecte dans la période."));
+      mount("tab-main", alerte, carte, suiteCarte);
+    }
+    mount("tab-pied",
+      h("span", null, [
+        state.error ? "API indisponible : dernières données conservées" : `Mis à jour à ${fTime.format(state.fetchedAt)}`,
+        `${state.center.label}${state.center.cp ? ` (${state.center.cp})` : ""}`,
+        perimetre(), `${state.horizon} jours`, C.DON_FIELDS[state.don].label,
+      ].join(" · ")),
+      h("span", null, Tab.read() ? "Réglages enregistrés sur cet appareil" : "Réglages non enregistrés : ⚙ Réglages → Enregistrer"));
+    if (state.tabPremier) {
+      state.tabPremier = false;
+      openReglages();
+    }
+  }
+
+  // ---------------------------------------------------------- fenêtre de réglages
+  // Aperçu : la liste des lieux est recalculée à chaque changement de réglage, sans toucher à l'affichage.
+  const reg = { communes: [], cpLoaded: null, raw: null, rawKey: null, result: null, timer: null, seq: 0 };
+
+  function regLire() {
+    const cp = $("reg-cp").value.trim();
+    const r = entierBorne($("reg-rayon").value, BORNES.rayon);
+    const j = entierBorne($("reg-jours").value, BORNES.jours);
+    $("reg-rayon").setAttribute("aria-invalid", String(r === null));
+    $("reg-jours").setAttribute("aria-invalid", String(j === null));
+    $("reg-cp").setAttribute("aria-invalid", String(!/^\d{5}$/.test(cp)));
+    const erreurs = [];
+    if (!/^\d{5}$/.test(cp)) erreurs.push("Code postal : 5 chiffres.");
+    if (r === null) erreurs.push("Rayon : un entier de 0 (commune seule) à 50 km.");
+    if (j === null) erreurs.push("Nombre de jours : un entier de 1 à 180.");
+    $("reg-err").textContent = erreurs.join(" ");
+    return erreurs.length ? null : { cp, r, j, don: $("reg-don").value, insee: $("reg-commune").value || null };
+  }
+
+  function regCommunes() {
+    const sel = $("reg-commune");
+    sel.replaceChildren(...reg.communes.map((c) => h("option", { value: c.code }, c.nom)));
+    $("reg-commune-field").hidden = reg.communes.length < 2;
+  }
+
+  function regLieux(selected) {
+    const groupes = new Map();
+    for (const c of reg.result ? reg.result.collectes : []) {
+      const k = cleLieu(c);
+      if (!groupes.has(k)) groupes.set(k, { nom: nomLieu(c), dates: [] });
+      groupes.get(k).dates.push(fShort.format(c.debut));
+    }
+    const opts = [h("option", { value: "auto" }, "Prochaine collecte du secteur (tous les lieux)")];
+    for (const [k, g] of groupes) {
+      opts.push(h("option", { value: k, "data-nom": g.nom }, `${g.nom} — ${g.dates.slice(0, 3).join(", ")}${g.dates.length > 3 ? "…" : ""}`));
+    }
+    if (selected !== "auto" && !groupes.has(selected) && state.tabLieuNom) {
+      opts.push(h("option", { value: selected, "data-nom": state.tabLieuNom }, `${state.tabLieuNom} — aucune collecte dans la période`));
+    }
+    $("reg-lieu").replaceChildren(...opts);
+    $("reg-lieu").value = [...$("reg-lieu").options].some((o) => o.value === selected) ? selected : "auto";
+    $("reg-lieu-aide").textContent = reg.result
+      ? `${reg.result.collectes.length} collecte${reg.result.collectes.length > 1 ? "s" : ""} trouvée${reg.result.collectes.length > 1 ? "s" : ""} avec ces réglages.`
+      : "";
+  }
+
+  /** Recalcule l'aperçu (communes du code postal, puis collectes) pour proposer les lieux. */
+  async function regApercu() {
+    const v = regLire();
+    if (!v) return;
+    const seq = ++reg.seq;
+    const garde = $("reg-lieu").value || state.tabLieu;
+    $("reg-lieu-aide").textContent = "Recherche des lieux…";
+    try {
+      if (reg.cpLoaded !== v.cp) {
+        reg.communes = await searchCommunes(v.cp);
+        if (seq !== reg.seq) return;
+        reg.cpLoaded = v.cp;
+        regCommunes();
+        if (!reg.communes.length) { $("reg-cp-err").textContent = "Aucune commune ne correspond à ce code postal."; return; }
+        $("reg-cp-err").textContent = "";
+      }
+      const commune = reg.communes.find((c) => c.code === $("reg-commune").value) || reg.communes[0];
+      const rq = v.r === 0 ? C.COMMUNE_SEARCH_RADIUS : v.r;
+      const key = `${commune.code}|${rq}`;
+      if (reg.rawKey !== key) {
+        reg.raw = await fetchJson("efs", C.efsQuery(commune.lat, commune.lon, rq, 100));
+        if (seq !== reg.seq) return;
+        reg.rawKey = key;
+      }
+      const res = C.parseCollections(reg.raw, {
+        centerLat: commune.lat, centerLon: commune.lon, radiusKm: rq,
+        donType: v.don, includePro: false, horizonDays: v.j, now: new Date(),
+      });
+      reg.result = v.r === 0 ? C.filterCommune(res, commune.nom) : res;
+      regLieux(garde);
+    } catch (err) {
+      if (seq === reg.seq) $("reg-lieu-aide").textContent = `Liste des lieux indisponible : ${err.message}`;
+    }
+  }
+
+  function openReglages() {
+    if ($("reglages").open) return;
+    const t = Tab.read();
+    $("reg-cp").value = (state.center && state.center.cp) || $("cp").value;
+    $("reg-rayon").value = state.radius;
+    $("reg-jours").value = state.horizon;
+    $("reg-don").value = state.don;
+    $("reg-auto").checked = t ? t.auto !== false : true;
+    $("reg-cp-err").textContent = "";
+    // L'aperçu repart de la recherche affichée.
+    reg.communes = state.communes;
+    reg.cpLoaded = state.cpLoaded;
+    regCommunes();
+    if (state.insee) $("reg-commune").value = state.insee;
+    reg.raw = state.raw;
+    reg.rawKey = state.center && state.insee ? `${state.insee}|${rayonRecherche()}` : null;
+    reg.result = state.result;
+    regLieux(state.tabLieu);
+    regLire();
+    $("reglages").showModal();
+  }
+
+  async function saveReglages(ev) {
+    ev.preventDefault();
+    const v = regLire();
+    if (!v) return;
+    if (reg.cpLoaded !== v.cp) { await regApercu(); if (reg.cpLoaded !== v.cp) return; }
+    const commune = reg.communes.find((c) => c.code === $("reg-commune").value) || reg.communes[0];
+    if (!commune) return;
+    const opt = $("reg-lieu").selectedOptions[0];
+    const cfg = {
+      v: 1, cp: v.cp, insee: commune.code, nom: commune.nom, lat: +commune.lat.toFixed(5), lon: +commune.lon.toFixed(5),
+      r: v.r, j: v.j, don: v.don,
+      lieu: opt ? opt.value : "auto", lieuNom: opt && opt.value !== "auto" ? opt.dataset.nom || "" : "",
+      auto: $("reg-auto").checked,
+    };
+    $("reglages").close();
+    const ok = Tab.write(cfg);
+    enterTablette(cfg);
+    if (!ok) {
+      mount("tab-pied", h("span", null, "Le navigateur a refusé le cookie (page ouverte depuis un fichier local, ou cookies bloqués) : réglages gardés jusqu’à la fermeture de la page."));
+    }
+  }
+
+  function forgetReglages() {
+    Tab.clear();
+    $("reglages").close();
+    state.tabCfg = null;
+    renderTablette();
+  }
+
+  function initTablette() {
+    $("tablette-btn").addEventListener("click", () => enterTablette(Tab.read()));
+    $("tab-quitter").addEventListener("click", exitTablette);
+    $("tab-reglages").addEventListener("click", openReglages);
+    $("reg-form").addEventListener("submit", saveReglages);
+    $("reg-annuler").addEventListener("click", () => $("reglages").close());
+    $("reg-oublier").addEventListener("click", forgetReglages);
+    $("reg-cp").addEventListener("input", (e) => {
+      e.target.value = e.target.value.replace(/\D/g, "").slice(0, 5);
+      if (e.target.value.length === 5) { clearTimeout(reg.timer); reg.timer = setTimeout(regApercu, 300); }
+    });
+    for (const id of ["reg-commune", "reg-rayon", "reg-jours", "reg-don"]) {
+      $(id).addEventListener("change", () => { clearTimeout(reg.timer); reg.timer = setTimeout(regApercu, 300); });
+    }
+  }
+
   // ---------------------------------------------------------------- actions
   function startDemo() {
     state.demo = true;
@@ -760,22 +1105,26 @@
     const viaUrl = p.has("cp") || p.has("lat") || p.get("demo") === "1";
     const b = !viaUrl ? state.base : null;
     $("cp").value = p.get("cp") || (b && b.t === "cp" ? b.cp : "14760");
-    $("rayon").value = Math.min(50, Math.max(1, +p.get("r") || 10));
+    const rUrl = entierBorne(p.get("r"), BORNES.rayon);
+    $("rayon").value = rUrl === null ? 10 : rUrl;
     if (["sang", "plasma", "plaquettes"].includes(p.get("don"))) $("don").value = p.get("don");
-    if (["30", "60", "90", "180"].includes(p.get("h"))) $("horizon").value = p.get("h");
+    const jUrl = entierBorne(p.get("h"), BORNES.jours);
+    $("horizon").value = jUrl === null ? JOURS_DEFAUT : jUrl;
     $("pro").checked = p.get("pro") === "1";
     $("rdv").checked = p.get("rdv") === "1";
     state.communeVue = p.get("vc") ? cle(p.get("vc")) : "auto";
     state.insee = p.get("insee") || (b && b.t === "cp" ? b.insee : null);
-    $("rayon-out").textContent = `${$("rayon").value} km`;
+    const rayonTexte = () => { $("rayon-out").textContent = +$("rayon").value === 0 ? "commune" : `${$("rayon").value} km`; };
+    rayonTexte();
 
     $("search").addEventListener("submit", onSubmit);
-    $("rayon").addEventListener("input", () => { $("rayon-out").textContent = `${$("rayon").value} km`; });
+    $("rayon").addEventListener("input", rayonTexte);
     // Le rayon change le rectangle interrogé : nouvel appel. Les autres réglages filtrent la réponse déjà reçue.
     $("rayon").addEventListener("change", () => { readForm(); if (state.center && !state.busy) loadCollectes(); });
     for (const id of ["don", "horizon", "pro", "rdv"]) {
-      $(id).addEventListener("change", () => { readForm(); reparse(); syncUrl(); });
+      $(id).addEventListener("change", () => { if (readForm()) { reparse(); syncUrl(); } });
     }
+    initTablette();
     $("commune").addEventListener("change", (e) => {
       state.insee = e.target.value; selectCommune(); readForm(); loadCollectes();
     });
@@ -786,6 +1135,9 @@
 
     const lat = parseFloat(p.get("lat")), lon = parseFloat(p.get("lon"));
     renderBase();
+    // Mode tablette : demandé dans l'adresse, ou enregistré sur cet appareil (cookie) sans autre paramètre.
+    const tab = Tab.read();
+    if (p.get("mode") === "tablette" || (!viaUrl && tab && tab.auto)) { enterTablette(tab); return; }
     if (p.get("demo") === "1") startDemo();
     else if (b && b.t === "geo") {
       readForm();

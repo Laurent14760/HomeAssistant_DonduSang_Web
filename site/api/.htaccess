@@ -1,0 +1,12 @@
+# Relais des API pour un hébergement mutualisé Apache + PHP (OVH, o2switch, Ionos, Hostinger…).
+# La page appelle api/efs/… et api/geo/… : ces règles les renvoient vers proxy.php.
+# Inutile avec Docker (nginx.conf joue ce rôle) ; sans effet sur nginx.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^efs/(.*)$ proxy.php?cible=efs&chemin=$1 [QSA,L]
+  RewriteRule ^geo/(.*)$ proxy.php?cible=geo&chemin=$1 [QSA,L]
+</IfModule>
+# Le dossier du cache ne doit jamais être servi.
+<IfModule mod_alias.c>
+  RedirectMatch 404 /api/cache/
+</IfModule>

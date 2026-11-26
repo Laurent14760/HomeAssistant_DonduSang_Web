@@ -1,9 +1,9 @@
 # Page « Collectes de don du sang » – mode opératoire
 
-Page web dynamique et auto-hébergée. On saisit un code postal, on règle le rayon, et la page interroge directement les API publiques pour mettre à jour les trois visuels :
+Page web dynamique et auto-hébergée (version 3.0). On saisit un code postal, on règle le rayon et le nombre de jours, et la page interroge directement les API publiques pour mettre à jour les trois visuels :
 
 1. **Prochaine collecte** : date, créneaux, lieu, places restantes, remplissage, liens de rendez-vous et d'itinéraire, et quatre indicateurs de synthèse.
-2. **Agenda** : toutes les collectes de l'horizon, avec le statut de chacune (planning ouvert, complet, non ouvert).
+2. **Agenda** : toutes les collectes de la période, avec le statut de chacune (planning ouvert, complet, non ouvert).
 3. **Carte et remplissage** : position des lieux dans le cercle, jauge de la prochaine collecte et taux de réservation collecte par collecte.
 
 La page n'a **aucun lien avec Home Assistant**. Le serveur Home Assistant peut seulement servir à l'héberger (option A).
@@ -31,13 +31,23 @@ Règles de filtrage appliquées :
 
 **Ce qui déclenche un appel :**
 - Changer le **rayon** relance un appel, car le rectangle interrogé change.
-- Changer le **type de don**, l'**horizon** ou l'option **collectes professionnelles** refiltre la réponse déjà reçue, sans nouvel appel.
+- Changer le **type de don**, le **nombre de jours** ou l'option **collectes professionnelles** refiltre la réponse déjà reçue, sans nouvel appel.
 - La page s'actualise seule toutes les heures tant qu'elle reste ouverte.
 
 **Autres fonctions :**
 - **Mémorisation dans l'adresse :** la recherche est conservée dans l'URL (`?cp=14760&r=15&don=plasma`). Une recherche se partage ou se met en favori.
 - **Mode démonstration :** il rejoue une réponse enregistrée (code postal 14760), avec les dates recalées sur le jour courant. Il permet de présenter sans réseau ou si l'API est indisponible.
 - **Panne de l'API :** les dernières données valides restent affichées et un bandeau explique l'erreur.
+
+### Nouveautés de la version 3.0
+
+- **Mode tablette** (bouton « Mode tablette », ou adresse `…/?mode=tablette`). Affichage lisible de loin du **lieu de collecte choisi** : date, horaires, places restantes, jauge, bouton de rendez-vous, puis les autres collectes du secteur, l'heure et la mise à jour. Voir § 7.
+- **Réglages par bouton.** « ⚙ Réglages » ouvre une fenêtre avec le lieu initial (code postal, commune), le rayon, le nombre de jours, le type de don et le lieu de collecte affiché ; la liste des lieux se recalcule à chaque changement. « Enregistrer » les conserve dans le cookie `efs_tablette` (un an) ; la case « Ouvrir directement en mode tablette » fait démarrer la page en mode tablette sur cet appareil. « Oublier ces réglages » efface le cookie.
+- **Rayon 0 = uniquement la commune du code postal**, comme l'intégration Home Assistant 1.4.1 : la page interroge l'API à 10 km puis ne garde que les collectes de la commune. Le rayon 0 n'est pas proposé avec « Utiliser ma position » (pas de commune de référence).
+- **Nombre de jours** de 1 à 180 (champ libre, défaut 30) au lieu de l'ancienne liste 30/60/90/180. Une valeur hors bornes, ou un rayon hors 0–50 km dans les réglages, est signalée sous le champ et la recherche n'est pas lancée.
+- **Hébergement mutualisé** : relais PHP (`site/api/proxy.php`) et en-têtes de sécurité (`site/.htaccess`) pour publier la page sur un petit site web Apache + PHP, avec le même cache que nginx. Voir l'option D.
+
+Cookies : `efs_lieu_base` (lieu de base, page normale) et `efs_tablette` (réglages de la tablette) sont indépendants, déposés uniquement quand l'utilisateur clique, lus par ce seul navigateur et jamais transmis à un tiers.
 
 ### Nouveautés de la version 2.2
 
@@ -56,9 +66,9 @@ Un navigateur n'accepte d'appeler une API d'un autre domaine que si celle-ci l'a
 - l'API Géo l'autorise ;
 - pour l'API de l'EFS, rien ne le garantit.
 
-Le kit contourne le problème avec un petit **proxy nginx**. La page appelle `/api/efs/…` sur son propre serveur, et nginx relaie la requête à l'EFS. Ce relais met aussi les réponses en cache 5 minutes, ce qui ménage l'API.
+Le kit contourne le problème avec un petit **relais** : la page appelle `api/efs/…` sur son propre serveur, qui relaie la requête à l'EFS et met les réponses en cache 5 minutes, ce qui ménage l'API. Deux relais sont fournis : **nginx** (option B, Docker) et **PHP** (option D, hébergement mutualisé).
 
-La page essaie toujours le proxy en premier, puis l'appel direct en secours. C'est pourquoi l'**option B (Docker) est la solution de référence** : c'est la seule qui fournit le proxy.
+La page essaie toujours le relais en premier, puis l'appel direct en secours. C'est pourquoi les **options B et D sont les solutions de référence** ; les options A et C n'ont pas de relais.
 
 ---
 
@@ -68,6 +78,8 @@ La page essaie toujours le proxy en premier, puis l'appel direct en secours. C'e
 efs-presentation/
 ├── site/                     ← le site (à publier tel quel)
 │   ├── index.html
+│   ├── .htaccess             en-têtes de sécurité (hébergement Apache, option D)
+│   ├── api/                  relais PHP des API (option D) : proxy.php, .htaccess
 │   ├── css/styles.css
 │   └── js/
 │       ├── efs-core.js       logique métier (calculs, filtres)
@@ -76,6 +88,7 @@ efs-presentation/
 ├── nginx.conf                serveur web + proxy API + en-têtes de sécurité
 ├── docker-compose.yml        déploiement Docker (option B)
 ├── Dockerfile                variante « image autonome »
+├── images/                   captures d'écran du README
 ├── tests/                    tests de la logique métier (Node.js)
 └── MODE_OPERATOIRE.md
 ```
@@ -86,6 +99,7 @@ efs-presentation/
 
 | Situation | Option | Proxy API | Effort |
 |---|---|---|---|
+| Petit site web chez un hébergeur mutualisé (Apache + PHP), accessible depuis Internet | **D – hébergement mutualisé** | Oui (PHP) | 20 min |
 | Machine avec Docker : NAS, serveur Linux, PC, ou hôte Home Assistant *Container* ou *Supervised* | **B – Docker (recommandée)** | Oui | 15 min |
 | Seul le serveur Home Assistant OS est disponible | **A – dossier `www` de Home Assistant** | Non | 5 min |
 | Démonstration sur un portable | **C – serveur local temporaire** | Non | 2 min |
@@ -147,7 +161,17 @@ nginx résout les noms `oudonner.api.efs.sante.fr` et `geo.api.gouv.fr` au déma
 
 ### Accès extérieur (facultatif)
 
-Sur le réseau local, rien d'autre n'est nécessaire. Pour une diffusion hors de chez vous, placez le conteneur derrière un reverse proxy HTTPS (Nginx Proxy Manager, Caddy, Traefik) plutôt que d'ouvrir le port 8080 sur la box. HTTPS active en plus le bouton « Utiliser ma position », que les navigateurs réservent aux pages sécurisées.
+Sur le réseau local, rien d'autre n'est nécessaire. Pour une diffusion hors de chez vous, placez le conteneur derrière un reverse proxy HTTPS (Nginx Proxy Manager, Caddy, Traefik) plutôt que d'ouvrir le port 8080 sur la box. HTTPS active en plus le bouton « Utiliser ma position », que les navigateurs réservent aux pages sécurisées, et l'attribut `Secure` des cookies.
+
+Exemple sur un petit VPS avec Caddy (certificat Let's Encrypt automatique) : faire pointer un enregistrement DNS `collectes.mondomaine.fr` vers le VPS, ouvrir les ports 80 et 443, puis dans le `Caddyfile` :
+
+```
+collectes.mondomaine.fr {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Avec Nginx Proxy Manager : *Proxy Hosts → Add Proxy Host*, domaine `collectes.mondomaine.fr`, cible `http://<ip-du-serveur>:8080`, onglet *SSL* → *Request a new SSL Certificate* et *Force SSL*.
 
 ---
 
@@ -162,6 +186,58 @@ Sur le réseau local, rien d'autre n'est nécessaire. Pour une diffusion hors de
 - **Pas de proxy.** Le navigateur appelle l'API de l'EFS en direct. Si l'EFS n'autorise pas ces appels (CORS), un bandeau rouge l'indique et propose le mode démonstration. Faites l'essai : si le bandeau apparaît, passez à l'option B.
 - **Accès public.** Les fichiers de `/local/` sont servis sans authentification à quiconque peut joindre le port 8123.
 - **Cache du navigateur.** Après une mise à jour des fichiers, forcez le rechargement (Ctrl + F5).
+
+## Option D – Petit site web sur un hébergement mutualisé (Apache + PHP)
+
+Pour publier la page sur Internet sans serveur à administrer : un hébergement web d'entrée de gamme (OVH Perso/Pro, o2switch, Ionos, Hostinger, PlanetHoster…) suffit. Le relais PHP fourni remplace le proxy nginx : la page appelle `api/efs/…` et `api/geo/…`, et `site/api/proxy.php` relaie vers les deux API, et elles seules.
+
+### Prérequis
+
+- Hébergement **Apache** avec `.htaccess` actif (`mod_rewrite`, `mod_headers`) — c'est le cas par défaut chez les hébergeurs cités.
+- **PHP 7.4 ou plus** (8.x conseillé) avec l'extension `curl` (ou `allow_url_fopen` activé).
+- Un nom de domaine ou sous-domaine (ex. `collectes.mondomaine.fr`) et un certificat **HTTPS** (Let's Encrypt, gratuit, activable depuis l'espace client de l'hébergeur).
+- Un client FTP/SFTP (FileZilla, WinSCP) ou le gestionnaire de fichiers de l'espace client.
+
+### Mise en ligne
+
+1. **Sous-domaine** (facultatif) : dans l'espace client, créer `collectes.mondomaine.fr` et le faire pointer vers un dossier, par exemple `www/collectes/`. Sans sous-domaine, un dossier `www/collectes/` donnera `https://mondomaine.fr/collectes/`.
+2. **HTTPS** : activer le certificat Let's Encrypt pour ce domaine et, si l'option existe, la redirection automatique HTTP → HTTPS.
+3. **PHP** : vérifier dans l'espace client que la version de PHP est 7.4 ou plus (8.2 recommandé).
+4. **Fichiers** : déposer **tout le contenu** du dossier `site/` dans le dossier cible, en conservant l'arborescence et les fichiers cachés :
+
+   ```
+   www/collectes/
+   ├── .htaccess          ← fichier caché : activer l'affichage des fichiers cachés dans le client FTP
+   ├── index.html
+   ├── api/
+   │   ├── .htaccess
+   │   └── proxy.php
+   ├── css/styles.css
+   └── js/ (app.js, efs-core.js, demo-data.js)
+   ```
+
+   Le dossier `api/cache/` est créé automatiquement au premier appel ; s'il ne peut pas l'être, le créer à la main avec les droits d'écriture du serveur web (755 ou 775 selon l'hébergeur).
+5. **Vérifier le relais** dans un navigateur :
+   - `https://collectes.mondomaine.fr/api/geo/communes?codePostal=14760&fields=nom` → `[{"nom":"Bretteville-sur-Odon"}]` ;
+   - `https://collectes.mondomaine.fr/api/efs/samplingcollection/searchnearpoint?CenterLatitude=49.1665&CenterLongitude=-0.4185&DiameterLatitude=0.18&DiameterLongitude=0.28&UserLatitude=49.1665&UserLongitude=-0.4185&Limit=5` → du JSON commençant par `{"samplingLocationCollections"`.
+6. **Ouvrir la page** : `https://collectes.mondomaine.fr/`. Le bandeau d'état doit indiquer « Données EFS de hh:mm », sans bandeau rouge.
+
+### Sécurité et fonctionnement du relais
+
+- `GET` uniquement, vers deux adresses fixes : ce n'est pas un relais ouvert (toute autre adresse répond 404) ; seuls les paramètres attendus sont transmis, ni cookie ni adresse IP du visiteur.
+- Cache disque dans `api/cache/` : 5 min pour l'EFS, 1 jour pour les communes ; en cas de panne de l'API, la dernière réponse connue est servie (en-tête `X-Cache: STALE`). Le dossier n'est pas accessible depuis le web.
+- `site/.htaccess` pose les mêmes en-têtes de sécurité que nginx (CSP, `nosniff`, `no-referrer`).
+
+### Dépannage
+
+| Symptôme | Cause et solution |
+|---|---|
+| `api/geo/…` renvoie une page 404 de l'hébergeur | `.htaccess` absent (fichier caché non transféré) ou `mod_rewrite` désactivé : retransférer `api/.htaccess`, vérifier l'option dans l'espace client. |
+| Erreur 500 | Directive non autorisée par l'hébergeur dans `.htaccess` : commenter les lignes `Options` ou `Header` concernées (journal d'erreurs de l'espace client). |
+| `{"erreur":"L'API distante n'a pas répondu"}` (502) | Appels sortants bloqués ou `curl` absent : vérifier l'extension `curl` dans la configuration PHP ; certains hébergements gratuits interdisent les appels sortants. |
+| La page ne se met pas à jour après un nouvel envoi | Cache du navigateur : Ctrl + F5 (les fichiers sont servis avec `Cache-Control: no-cache`). |
+
+Mise à jour : retransférer le contenu de `site/` (le cache `api/cache/` peut être conservé ou supprimé).
 
 ## Option C – Démonstration sur un portable
 
@@ -189,6 +265,10 @@ Ouvrir directement `index.html` par double-clic fonctionne généralement aussi,
 - [ ] « Définir … comme lieu de base », puis rechargement de la page sans paramètre : la page s’ouvre sur ce lieu ; « Oublier » l’efface.
 - [ ] « Collecte présentée » : choisir une commune affiche sa prochaine collecte dans le visuel 1.
 - [ ] L'affichage est correct sur téléphone et en mode sombre.
+- [ ] Rayon 0 avec 14760 : seules les collectes de Bretteville-sur-Odon restent ; le bandeau indique « Bretteville-sur-Odon seulement ».
+- [ ] Nombre de jours 200 : message sous le champ, aucune nouvelle recherche.
+- [ ] « Mode tablette » : la fenêtre de réglages s'ouvre ; choisir un lieu, « Enregistrer » ; recharger la page sans paramètre : elle s'ouvre en mode tablette sur ce lieu. « Quitter » revient à la page normale.
+- [ ] Option D : les deux adresses de vérification du relais renvoient du JSON.
 
 ## 5. Tests
 
@@ -196,10 +276,23 @@ Ouvrir directement `index.html` par double-clic fonctionne généralement aussi,
 node --test tests/efs-core.test.js
 ```
 
-Sept scénarios portent sur la réponse enregistrée : géométrie, critères de recette, horizon, collectes professionnelles, doublons, créneaux et heure d'hiver, places (ouvert, non ouvert, complet), bascule du type de don, prochaine collecte. Ils donnent les mêmes résultats que les tests de l'intégration Home Assistant.
+Neuf scénarios portent sur la réponse enregistrée : géométrie, critères de recette, horizon, collectes professionnelles, doublons, créneaux et heure d'hiver, places (ouvert, non ouvert, complet), bascule du type de don, prochaine collecte, rayon 0 (commune seule). Ils donnent les mêmes résultats que les tests de l'intégration Home Assistant.
 
 ## 6. Limites connues
 
 - L'API Carto v3 est publique mais sans engagement de service : son format ou ses règles d'accès peuvent évoluer.
 - La carte est un plan schématique à l'échelle (quadrillage en km), sans fond cartographique. Ce choix garde la page autonome. Chaque point ouvre le lieu sur OpenStreetMap.
 - Les jeux de test reproduisent la structure décrite dans la spécification. Vérifiez la première réponse réelle (option B, commande `curl` ci-dessus) lors de la mise en service.
+
+## 7. Mettre en place une tablette
+
+1. Sur la tablette, ouvrir la page publiée (option B ou D, de préférence en HTTPS), puis toucher **Mode tablette** — ou ouvrir directement `https://collectes.mondomaine.fr/?mode=tablette` et l'enregistrer en favori.
+2. La fenêtre **Réglages de la tablette** s'ouvre au premier usage. Exemple : code postal `14760`, rayon `10`, nombre de jours `30`, type « Sang total », lieu de collecte « Salle polyvalente · Bretteville-sur-Odon ». Si le lieu voulu n'apparaît pas, augmenter le nombre de jours : la liste se recalcule aussitôt.
+3. Laisser cochée **Ouvrir directement en mode tablette sur cet appareil**, puis **Enregistrer**. Les réglages sont conservés un an dans le cookie `efs_tablette` de ce navigateur.
+4. Pour modifier le lieu initial, le rayon ou le nombre de jours : bouton **⚙ Réglages** en haut à droite. **Quitter** revient à la page normale pour la visite en cours, sans effacer les réglages ; « Oublier ces réglages » les efface.
+5. Affichage permanent (facultatif) :
+   - Android : ajouter la page à l'écran d'accueil (menu ⋮ → *Ajouter à l'écran d'accueil*), ou utiliser une application kiosque (*Fully Kiosk Browser*) avec l'adresse `…/?mode=tablette` et l'écran toujours allumé ;
+   - iPad : Safari → Partager → *Sur l'écran d'accueil*, et *Accès guidé* (Réglages → Accessibilité) pour verrouiller l'écran sur la page.
+
+Le cookie est propre au navigateur : une application kiosque garde le sien, distinct de celui de Chrome ou Safari ; refaire les réglages dans le navigateur réellement utilisé. Si le lieu choisi n'a plus de collecte dans la période, la tablette l'indique et affiche la prochaine collecte du secteur.
+

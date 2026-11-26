@@ -12,10 +12,77 @@
 <script src="js/app.js" defer></script>
 </head>
 <body>
+<!-- Mode tablette : affichage compact du lieu de collecte choisi, réglages conservés dans un cookie -->
+<section class="tablette" id="tablette" hidden aria-label="Mode tablette">
+  <div class="tab-bar">
+    <div class="tab-titre">
+      <svg class="logo" viewBox="34 0 188 256" aria-hidden="true"><path d="M128 2C120 16 38 104 38 166a90 90 0 0 0 180 0C218 104 136 16 128 2Z" fill="currentColor"/></svg>
+      <span id="tab-titre">Don du sang</span>
+    </div>
+    <div class="tab-actions">
+      <span class="tab-horloge" id="tab-horloge" aria-hidden="true"></span>
+      <button class="btn secondary" type="button" id="tab-reglages">⚙ Réglages</button>
+      <button class="btn ghost" type="button" id="tab-quitter">Quitter</button>
+    </div>
+  </div>
+  <div class="tab-main" id="tab-main"><div class="skeleton"></div></div>
+  <div class="tab-pied" id="tab-pied" aria-live="polite"></div>
+</section>
+
+<dialog class="reglages" id="reglages" aria-labelledby="reg-titre">
+  <form id="reg-form" novalidate>
+    <h2 id="reg-titre">Réglages de la tablette</h2>
+    <p class="note">Ces réglages sont enregistrés dans un cookie de ce navigateur (« efs_tablette », un an) : la tablette les retrouve à chaque ouverture.</p>
+    <div class="reg-grid">
+      <div class="f">
+        <label for="reg-cp">Lieu initial : code postal</label>
+        <input type="text" id="reg-cp" inputmode="numeric" autocomplete="postal-code" maxlength="5" placeholder="14760" aria-describedby="reg-cp-err">
+        <span class="field-error" id="reg-cp-err" aria-live="polite"></span>
+      </div>
+      <div class="f" id="reg-commune-field" hidden>
+        <label for="reg-commune">Commune</label>
+        <select id="reg-commune"></select>
+      </div>
+      <div class="f">
+        <label for="reg-rayon">Rayon (km)</label>
+        <input type="number" id="reg-rayon" min="0" max="50" step="1" inputmode="numeric" aria-describedby="reg-rayon-aide">
+        <span class="hint" id="reg-rayon-aide">0 = uniquement la commune de départ · 1 à 50 km</span>
+      </div>
+      <div class="f">
+        <label for="reg-jours">Nombre de jours</label>
+        <input type="number" id="reg-jours" min="1" max="180" step="1" inputmode="numeric" aria-describedby="reg-jours-aide">
+        <span class="hint" id="reg-jours-aide">1 à 180 jours à partir d’aujourd’hui</span>
+      </div>
+      <div class="f">
+        <label for="reg-don">Type de don</label>
+        <select id="reg-don">
+          <option value="sang">Sang total</option>
+          <option value="plasma">Plasma</option>
+          <option value="plaquettes">Plaquettes</option>
+        </select>
+      </div>
+      <div class="f full">
+        <label for="reg-lieu">Lieu de collecte affiché</label>
+        <select id="reg-lieu"></select>
+        <span class="hint" id="reg-lieu-aide" aria-live="polite"></span>
+      </div>
+      <div class="f full">
+        <label class="check"><input type="checkbox" id="reg-auto" checked> Ouvrir directement en mode tablette sur cet appareil</label>
+      </div>
+    </div>
+    <p class="field-error" id="reg-err" aria-live="polite"></p>
+    <div class="reg-actions">
+      <button class="btn primary" type="submit" id="reg-ok">Enregistrer</button>
+      <button class="btn secondary" type="button" id="reg-annuler">Annuler</button>
+      <button class="btn ghost" type="button" id="reg-oublier">Oublier ces réglages</button>
+    </div>
+  </form>
+</dialog>
+
 <header class="wrap">
   <p class="eyebrow brand"><svg class="logo" viewBox="34 0 188 256" aria-hidden="true"><path d="M128 2C120 16 38 104 38 166a90 90 0 0 0 180 0C218 104 136 16 128 2Z" fill="currentColor"/><path d="M74 158C72 190 92 216 124 224" fill="none" stroke="#fff" stroke-opacity=".8" stroke-width="14" stroke-linecap="round"/></svg>Don du sang · données EFS en direct</p>
   <h1>Les collectes près de chez vous</h1>
-  <p class="lead">Saisissez un code postal et un rayon : la page interroge l’API publique de l’Établissement français du sang et met à jour la prochaine collecte, l’agenda des semaines à venir, la carte et le remplissage des créneaux.</p>
+  <p class="lead">Saisissez un code postal, un rayon et un nombre de jours : la page interroge l’API publique de l’Établissement français du sang et met à jour la prochaine collecte, l’agenda des semaines à venir, la carte et le remplissage des créneaux.</p>
 
   <form class="search" id="search" novalidate>
     <div class="fields">
@@ -31,9 +98,10 @@
       <div class="f wide">
         <span class="lbl" id="rayon-lbl">Rayon d’action</span>
         <div class="range">
-          <input type="range" id="rayon" name="rayon" min="1" max="50" step="1" value="10" aria-labelledby="rayon-lbl">
+          <input type="range" id="rayon" name="rayon" min="0" max="50" step="1" value="10" aria-labelledby="rayon-lbl" aria-describedby="rayon-aide">
           <output id="rayon-out" for="rayon">10 km</output>
         </div>
+        <span class="hint" id="rayon-aide">0 = uniquement la commune du code postal</span>
       </div>
       <div class="f">
         <label for="don">Type de don</label>
@@ -44,13 +112,9 @@
         </select>
       </div>
       <div class="f">
-        <label for="horizon">Horizon</label>
-        <select id="horizon" name="horizon">
-          <option value="30">30 jours</option>
-          <option value="60" selected>60 jours</option>
-          <option value="90">90 jours</option>
-          <option value="180">6 mois</option>
-        </select>
+        <label for="horizon">Nombre de jours</label>
+        <input type="number" id="horizon" name="horizon" min="1" max="180" step="1" value="30" inputmode="numeric" aria-describedby="horizon-err">
+        <span class="field-error" id="horizon-err" aria-live="polite"></span>
       </div>
       <div class="f wide">
         <label class="check"><input type="checkbox" id="pro" name="pro"> Inclure les collectes professionnelles (entreprises, lycées…)</label>
@@ -62,6 +126,7 @@
         <button class="btn primary" type="submit" id="go">Rechercher</button>
         <button class="btn secondary" type="button" id="geoloc">Utiliser ma position</button>
         <button class="btn ghost" type="button" id="demo">Données de démonstration</button>
+        <button class="btn secondary" type="button" id="tablette-btn">Mode tablette</button>
       </div>
     </div>
     <div class="base" id="base" aria-live="polite"></div>
@@ -93,7 +158,7 @@
   <section class="visual" id="agenda" aria-labelledby="t2">
     <div class="sec-head">
       <div><div class="num">VISUEL 2</div><h2 id="t2">Agenda des collectes</h2></div>
-      <p>Toutes les collectes de l’horizon choisi, triées par date. Un planning non encore ouvert n’est jamais affiché comme « 0 place ».</p>
+      <p>Toutes les collectes de la période choisie, triées par date. Un planning non encore ouvert n’est jamais affiché comme « 0 place ».</p>
     </div>
     <div id="v2"><div class="skeleton"></div></div>
   </section>
@@ -109,7 +174,7 @@
 
 <footer class="wrap">
   <p>Sources : API Carto v3 de l’Établissement français du sang (publique, référencée sur data.gouv.fr) et API Géo de l’État (geo.api.gouv.fr). Les données sont interrogées à chaque recherche et rafraîchies toutes les heures tant que la page reste ouverte.</p>
-  <p>Cookie : uniquement si vous enregistrez un lieu de base (cookie « efs_lieu_base », lu par ce navigateur seulement, jamais transmis à un tiers). Aucun cookie de mesure d’audience ou de publicité.</p>
+  <p>Cookies : uniquement à votre demande, quand vous enregistrez un lieu de base (« efs_lieu_base ») ou les réglages du mode tablette (« efs_tablette »). Ils ne contiennent que le lieu et les paramètres de recherche, sont lus par ce navigateur seulement et ne sont jamais transmis à un tiers. Aucun cookie de mesure d’audience ou de publicité.</p>
   <p>Page indépendante, non affiliée à l’EFS. Pour prendre rendez-vous, utilisez les liens qui mènent au site officiel <a href="https://dondesang.efs.sante.fr" target="_blank" rel="noopener">dondesang.efs.sante.fr</a>.</p>
 </footer>
 </body>
