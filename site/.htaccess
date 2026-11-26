@@ -11,3 +11,13 @@ Options -Indexes
     Header set Cache-Control "no-cache"
   </FilesMatch>
 </IfModule>
+
+# Redirection HTTP → HTTPS (facultative). À activer seulement si le panneau de l'hébergeur
+# ne le fait pas déjà (cPanel : Domaines → « Forcer la redirection HTTPS ») : les deux
+# ensemble ne posent pas de problème, mais un seul suffit.
+# <IfModule mod_rewrite.c>
+#   RewriteEngine On
+#   RewriteCond %{HTTPS} !=on
+#   RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+#   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+# </IfModule>

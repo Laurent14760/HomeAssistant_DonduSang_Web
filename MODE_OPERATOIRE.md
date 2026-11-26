@@ -240,6 +240,30 @@ Pour publier la page sur Internet sans serveur à administrer : un hébergement 
 
 Mise à jour : retransférer le contenu de `site/` (le cache `api/cache/` peut être conservé ou supprimé).
 
+### Exemple : Scaleway Web Hosting (cPanel), sous-domaine `dondusang`
+
+Remplacer `mondomaine.fr` par le domaine rattaché à l'hébergement.
+
+1. **Sous-domaine** : console Scaleway → *Domains & Web Hosting* → *Web Hosting* → l'hébergement → ouvrir **cPanel**. Dans cPanel → **Domaines** → **Créer un nouveau domaine** : `dondusang.mondomaine.fr`, **décocher** « Partager la racine du document », racine proposée `dondusang.mondomaine.fr` (ou `public_html/dondusang`) → **Soumettre**.
+2. **DNS** :
+   - domaine utilisant les serveurs DNS Scaleway de l'hébergement (configuration automatique) : l'enregistrement du sous-domaine est créé avec lui ;
+   - domaine géré ailleurs, ou zone gérée dans *Domains and DNS* (configuration manuelle) : ajouter un enregistrement `dondusang` de type **A** vers l'adresse IPv4 de l'hébergement (cPanel → panneau *Informations générales* → *Adresse IP partagée*), plus un **AAAA** si une IPv6 est indiquée. Un **CNAME** `dondusang` → `mondomaine.fr.` (point final) convient aussi si `mondomaine.fr` pointe déjà vers l'hébergement.
+   - contrôle : `dig +short dondusang.mondomaine.fr` renvoie l'adresse de l'hébergement (quelques minutes, jusqu'à 48 h pour un changement de serveurs DNS).
+3. **HTTPS** : le certificat Let's Encrypt est émis automatiquement (AutoSSL) une fois le DNS résolu. cPanel → **État SSL/TLS** : le sous-domaine doit être couvert ; sinon **Exécuter AutoSSL**. Puis cPanel → **Domaines** → activer **Forcer la redirection HTTPS** pour `dondusang.mondomaine.fr` (ou décommenter le bloc prévu dans `site/.htaccess`).
+4. **PHP** : cPanel → **MultiPHP Manager** → `dondusang.mondomaine.fr` → PHP 8.2 ou plus. Si cPanel propose **Select PHP Version**, vérifier que l'extension `curl` est cochée.
+5. **Fichiers** : zipper le **contenu** du dossier `site/` (pas le dossier lui-même), puis cPanel → **Gestionnaire de fichiers** → racine du sous-domaine → *Charger* → clic droit sur le zip → *Extract*. Dans *Paramètres* du gestionnaire, cocher **Afficher les fichiers cachés** pour vérifier la présence de `.htaccess` et `api/.htaccess`. (Alternative : SFTP/FTP avec les identifiants cPanel.)
+6. **Vérifier les redirections** :
+
+   ```bash
+   curl -sI http://dondusang.mondomaine.fr/ | head -3                         # 301 vers https://
+   curl -s "https://dondusang.mondomaine.fr/api/geo/communes?codePostal=14760&fields=nom"   # [{"nom":"Bretteville-sur-Odon"}]
+   curl -s "https://dondusang.mondomaine.fr/api/efs/samplingcollection/searchnearpoint?CenterLatitude=49.1665&CenterLongitude=-0.4185&DiameterLatitude=0.18&DiameterLongitude=0.28&UserLatitude=49.1665&UserLongitude=-0.4185&Limit=5" | head -c 120
+   curl -s -o /dev/null -w "%{http_code}\n" https://dondusang.mondomaine.fr/api/autre      # 404 (relais fermé)
+   curl -s -o /dev/null -w "%{http_code}\n" https://dondusang.mondomaine.fr/api/cache/     # 404 (cache non exposé)
+   ```
+
+7. **Ouvrir** `https://dondusang.mondomaine.fr/` puis, sur la tablette, `https://dondusang.mondomaine.fr/?mode=tablette`.
+
 ## Option C – Démonstration sur un portable
 
 Depuis le dossier `site/` :
